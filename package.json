@@ -2,7 +2,7 @@
   "name": "decky-translator",
   "version": "0.8.0",
   "type": "module",
-  "description": "Translate anything on your screen to your language",
+  "description": "Translate anything on screen to your language. Works with any game or application - a great tool for language learning or enjoying untranslated games",
   "scripts": {
     "build": "shx rm -rf dist && rollup -c",
     "watch": "rollup -c -w",
