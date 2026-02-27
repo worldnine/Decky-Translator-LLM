@@ -22,20 +22,22 @@ Might be helpful for learning a new language by playing games or some other purp
 
 - Steam Deck (LCD or OLED)
 - [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) installed
-- Internet connection for text recognition and translation services
+- Internet connection for web-based text recognition and translation services
 
 ## Installation
 
 ### From Decky Plugin Store
-*Coming soon*
+1. Install [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader/tree/main?tab=readme-ov-file#-installation) on your Steam Deck
+2. Open (...) side bar and move down to Decky menu
+3. Select **store** icon to view all the available plugins
+4. Search for "Decky Translator" and install it
 
 ### Manual Installation
-1. [Download](https://github.com/cat-in-a-box/Decky-Translator/releases/latest/download/Decky.Translator.zip) the latest release from the [Releases](https://github.com/cat-in-a-box/decky-translator/releases) page
-2. Upload *Decky.Translator.zip* archive to any directory on your Steam Deck
-3. Open Decky Loader settings and go to Developer section
-4. Install Plugin from ZIP file -> "Browse" and then select *Decky.Translator.zip*
-5. Open Decky menu and select "Decky Translator"
-6. Enjoy!
+1. Install [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader/tree/main?tab=readme-ov-file#-installation) on your Steam Deck
+2. [Download](https://github.com/cat-in-a-box/Decky-Translator/releases/latest/download/Decky.Translator.zip) the latest release from the [Releases](https://github.com/cat-in-a-box/decky-translator/releases) page
+3. Upload *Decky.Translator.zip* archive to any directory on your Steam Deck
+4. Open Decky Loader settings and go to Developer section
+5. Install Plugin from ZIP file -> "Browse" and then select *Decky.Translator.zip*
 
 ## How to use it?
 
@@ -138,17 +140,19 @@ Only once I had to pay around 1€/month - and that was during VERY active devel
 ## Troubleshooting
 
 ### Black screen on capture
-- Try triggering translation again
-- If persistent, reboot your Steam Deck
+Try triggering translation again. If persistent, reboot your Steam Deck
 
 ### Translated text is too small
-- Try increasing the "Font Scaling" option in plugin settings
+Try increasing the "Font Scaling" option in plugin settings
 
 ### Plugin says I'm using a wrong API key
-- Double-check that you entered it correctly. If the issue persists, please raise an issue - let's investigate it together
+Double-check that you entered it correctly. If the issue persists, please raise an issue - let's investigate it together
 
 ### I see nothing / Recognition is bad
-- Try other text recognition methods - RapidOCR may not work well with stylized or pixelated text. I also plan to continuously improve recognition quality, so you can expect improvements over time
+Try other text recognition methods - RapidOCR may not work well with stylized or pixelated text. I also plan to continuously work on recognition quality, so you can expect improvements over time
+
+### I have Bazzite, and the plugin does not work
+Decky Translator does not currently support Bazzite. Stay tuned for future releases - this may change
 
 ## To-Do
 ### Functional
