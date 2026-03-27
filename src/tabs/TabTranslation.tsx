@@ -346,7 +346,8 @@ export const TabTranslation: VFC = () => {
                             <Dropdown
                                 rgOptions={[
                                     { label: <span>Google Translate</span>, data: "freegoogle" },
-                                    { label: <span>Google Cloud</span>, data: "googlecloud" }
+                                    { label: <span>Google Cloud</span>, data: "googlecloud" },
+                                    { label: <span>LLM (OpenAI互換)</span>, data: "llm" }
                                 ]}
                                 selectedOption={settings.translationProvider}
                                 onChange={(option) => updateSetting('translationProvider', option.data, 'Translation provider')}
@@ -410,9 +411,69 @@ export const TabTranslation: VFC = () => {
                                     )}
                                 </>
                             )}
+                            {settings.translationProvider === 'llm' && (
+                                <>
+                                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                                        <span style={{ fontSize: "18px" }}>🤖</span>
+                                        <span style={{ fontWeight: "bold", color: "#dcdedf" }}>LLM Translation (OpenAI互換)</span>
+                                    </div>
+                                    <div>- コンテキストを考慮した高品質翻訳</div>
+                                    <div>- Gemini, GPT, DeepSeek, Ollama等に対応</div>
+                                    <div>- API Key, Base URL, Model名の設定が必要</div>
+                                    {(!settings.llmBaseUrl || !settings.llmModel) && (
+                                        <div style={{ color: "#ff6b6b", marginTop: "4px" }}>Base URLとModel名を設定してください</div>
+                                    )}
+                                </>
+                            )}
                         </div>
                     </Field>
                 </PanelSectionRow>
+
+                {settings.translationProvider === 'llm' && (
+                    <>
+                        <PanelSectionRow>
+                            <Field label="LLM Base URL" childrenContainerWidth="max">
+                                <TextField
+                                    value={settings.llmBaseUrl}
+                                    onChange={(e) => updateSetting('llmBaseUrl', e.target.value, 'LLM Base URL')}
+                                    bShowClearAction={true}
+                                    description="例: https://api.openai.com, http://localhost:11434"
+                                />
+                            </Field>
+                        </PanelSectionRow>
+                        <PanelSectionRow>
+                            <Field label="LLM API Key" childrenContainerWidth="max">
+                                <TextField
+                                    value={settings.llmApiKey}
+                                    onChange={(e) => updateSetting('llmApiKey', e.target.value, 'LLM API Key')}
+                                    bShowClearAction={true}
+                                    bIsPassword={true}
+                                    description="Ollamaなどローカルサーバーの場合は空欄でOK"
+                                />
+                            </Field>
+                        </PanelSectionRow>
+                        <PanelSectionRow>
+                            <Field label="LLM Model" childrenContainerWidth="max">
+                                <TextField
+                                    value={settings.llmModel}
+                                    onChange={(e) => updateSetting('llmModel', e.target.value, 'LLM Model')}
+                                    bShowClearAction={true}
+                                    description="例: gemini-2.0-flash, gpt-4o-mini, deepseek-chat"
+                                />
+                            </Field>
+                        </PanelSectionRow>
+                        <PanelSectionRow>
+                            <Field label="System Prompt (任意)" childrenContainerWidth="max">
+                                <TextField
+                                    value={settings.llmSystemPrompt}
+                                    onChange={(e) => updateSetting('llmSystemPrompt', e.target.value, 'LLM System Prompt')}
+                                    bShowClearAction={true}
+                                    description="カスタムプロンプト（空欄でデフォルト使用）"
+                                />
+                            </Field>
+                        </PanelSectionRow>
+                    </>
+                )}
 
                 {/* Invisible spacer to help with scroll when focusing last element */}
                 <PanelSectionRow>

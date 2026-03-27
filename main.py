@@ -874,11 +874,17 @@ class Plugin:
     _provider_manager: ProviderManager = None
     _use_free_providers: bool = True  # Default to free providers (no API key needed)
     _ocr_provider: str = "rapidocr"  # "rapidocr" (RapidOCR), "ocrspace" (OCR.space), or "googlecloud" (Google Cloud)
-    _translation_provider: str = "freegoogle"  # "freegoogle" or "googlecloud"
+    _translation_provider: str = "freegoogle"  # "freegoogle", "googlecloud", or "llm"
 
     # OCR API configurations - user must provide their own API key
     _google_vision_api_key: str = ""
     _google_translate_api_key: str = ""
+
+    # LLM翻訳プロバイダー設定
+    _llm_base_url: str = ""
+    _llm_api_key: str = ""
+    _llm_model: str = ""
+    _llm_system_prompt: str = ""
 
     # Generic settings handlers
     async def get_setting(self, key, default=None):
@@ -987,6 +993,22 @@ class Plugin:
                         ocr_provider=self._ocr_provider,
                         translation_provider=value
                     )
+            elif key == "llm_base_url":
+                self._llm_base_url = value
+                if self._provider_manager:
+                    self._provider_manager.configure_llm(base_url=value)
+            elif key == "llm_api_key":
+                self._llm_api_key = value
+                if self._provider_manager:
+                    self._provider_manager.configure_llm(api_key=value)
+            elif key == "llm_model":
+                self._llm_model = value
+                if self._provider_manager:
+                    self._provider_manager.configure_llm(model=value)
+            elif key == "llm_system_prompt":
+                self._llm_system_prompt = value
+                if self._provider_manager:
+                    self._provider_manager.configure_llm(system_prompt=value)
             else:
                 logger.warning(f"Unknown setting key: {key}")
 
@@ -1022,7 +1044,11 @@ class Plugin:
                 "grouping_power": self._settings.get_setting("grouping_power", 0.25),
                 "hide_identical_translations": self._settings.get_setting("hide_identical_translations", False),
                 "allow_label_growth": self._settings.get_setting("allow_label_growth", False),
-                "custom_recognition_settings": self._settings.get_setting("custom_recognition_settings", False)
+                "custom_recognition_settings": self._settings.get_setting("custom_recognition_settings", False),
+                "llm_base_url": self._llm_base_url,
+                "llm_api_key": self._llm_api_key,
+                "llm_model": self._llm_model,
+                "llm_system_prompt": self._llm_system_prompt,
             }
             return settings
         except Exception as e:
@@ -1658,6 +1684,12 @@ class Plugin:
                     self._translation_provider = "freegoogle"
                 self._settings.set_setting("translation_provider", self._translation_provider)
 
+            # LLM翻訳プロバイダー設定を読み込み
+            self._llm_base_url = self._settings.get_setting("llm_base_url", "")
+            self._llm_api_key = self._settings.get_setting("llm_api_key", "")
+            self._llm_model = self._settings.get_setting("llm_model", "")
+            self._llm_system_prompt = self._settings.get_setting("llm_system_prompt", "")
+
             # Initialize provider manager
             self._provider_manager = ProviderManager()
             self._provider_manager.configure(
@@ -1666,6 +1698,15 @@ class Plugin:
                 ocr_provider=self._ocr_provider,
                 translation_provider=self._translation_provider
             )
+
+            # LLM設定をプロバイダーマネージャーに適用
+            if self._llm_base_url or self._llm_model:
+                self._provider_manager.configure_llm(
+                    base_url=self._llm_base_url,
+                    api_key=self._llm_api_key,
+                    model=self._llm_model,
+                    system_prompt=self._llm_system_prompt,
+                )
 
             # Load and apply RapidOCR-specific settings
             if self._settings.get_setting("custom_recognition_settings", False):

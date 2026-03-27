@@ -22,8 +22,12 @@ export interface Settings {
     quickToggleEnabled: boolean; // Quick toggle overlay with right button in combo modes
     useFreeProviders: boolean; // Use free providers (OCR.space + free Google Translate) - deprecated, use ocrProvider
     ocrProvider: 'rapidocr' | 'ocrspace' | 'googlecloud'; // OCR provider: rapidocr (RapidOCR), ocrspace (OCR.space), googlecloud (Google Cloud)
-    translationProvider: 'freegoogle' | 'googlecloud'; // Translation provider: freegoogle (Free Google Translate), googlecloud (Google Cloud Translation)
+    translationProvider: 'freegoogle' | 'googlecloud' | 'llm'; // Translation provider: freegoogle (Free Google Translate), googlecloud (Google Cloud Translation), llm (LLM OpenAI互換)
     googleApiKey: string; // Google Cloud Vision API key for text recognition
+    llmBaseUrl: string; // LLM API Base URL (OpenAI互換)
+    llmApiKey: string; // LLM API Key
+    llmModel: string; // LLMモデル名
+    llmSystemPrompt: string; // LLMシステムプロンプト
     debugMode: boolean; // Debug mode for verbose console logging
     fontScale: number; // Overlay font scale multiplier for external monitors
     groupingPower: number; // Text grouping aggressiveness (0.25 normal - 1.0 huge)
@@ -57,6 +61,10 @@ const initialSettings: Settings = {
     ocrProvider: "rapidocr", // Default to rapidocr (RapidOCR) provider
     translationProvider: "freegoogle", // Default to free Google Translate
     googleApiKey: "", // Empty by default, only needed for Google Cloud
+    llmBaseUrl: "", // LLM API Base URL
+    llmApiKey: "", // LLM API Key
+    llmModel: "", // LLMモデル名
+    llmSystemPrompt: "", // カスタムシステムプロンプト
     debugMode: false, // Debug mode off by default
     fontScale: 1.0,
     groupingPower: 0.25,
@@ -125,6 +133,10 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                     ocrProvider: serverSettings.ocr_provider || "rapidocr", // OCR provider setting
                     translationProvider: serverSettings.translation_provider || "freegoogle", // Translation provider setting
                     googleApiKey: serverSettings.google_api_key || "", // Google API key
+                    llmBaseUrl: serverSettings.llm_base_url || "",
+                    llmApiKey: serverSettings.llm_api_key || "",
+                    llmModel: serverSettings.llm_model || "",
+                    llmSystemPrompt: serverSettings.llm_system_prompt || "",
                     debugMode: serverSettings.debug_mode || false, // Debug mode
                     fontScale: serverSettings.font_scale ?? 1.0,
                     groupingPower: serverSettings.grouping_power ?? 0.25,
@@ -195,6 +207,10 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                 ocrProvider: 'ocr_provider',
                 translationProvider: 'translation_provider',
                 googleApiKey: 'google_api_key',
+                llmBaseUrl: 'llm_base_url',
+                llmApiKey: 'llm_api_key',
+                llmModel: 'llm_model',
+                llmSystemPrompt: 'llm_system_prompt',
                 debugMode: 'debug_mode',
                 fontScale: 'font_scale',
                 groupingPower: 'grouping_power',

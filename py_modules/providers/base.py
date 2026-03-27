@@ -28,6 +28,7 @@ class ProviderType(Enum):
     OCR_SPACE = "ocrspace"      # OCR.space (free, no key needed)
     FREE_GOOGLE = "freegoogle"  # Free Google Translate via deep-translator
     RAPIDOCR = "rapidocr"       # Local RapidOCR via ONNX Runtime (no internet required)
+    LLM = "llm"                 # LLM翻訳 (OpenAI API互換)
 
 
 @dataclass

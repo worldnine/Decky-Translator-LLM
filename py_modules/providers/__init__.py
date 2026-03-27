@@ -18,6 +18,7 @@ from .google_translate import GoogleTranslateProvider
 from .ocrspace import OCRSpaceProvider
 from .free_translate import FreeTranslateProvider
 from .rapidocr_provider import RapidOCRProvider
+from .llm_translate import LlmTranslateProvider
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ __all__ = [
     'OCRSpaceProvider',
     'FreeTranslateProvider',
     'RapidOCRProvider',
+    'LlmTranslateProvider',
     'ProviderManager',
 ]
 
@@ -52,12 +54,47 @@ class ProviderManager:
         self._use_free_providers = True  # Default to free providers
         self._google_api_key = ""
         self._ocr_provider_preference = "rapidocr"  # "rapidocr", "ocrspace", or "googlecloud"
-        self._translation_provider_preference = "freegoogle"  # "freegoogle" or "googlecloud"
+        self._translation_provider_preference = "freegoogle"  # "freegoogle", "googlecloud", or "llm"
         self._rapidocr_confidence = 0.5  # Default RapidOCR confidence threshold (0.0-1.0)
         self._rapidocr_box_thresh = 0.5  # Default RapidOCR box detection threshold (0.0-1.0)
         self._rapidocr_unclip_ratio = 1.6  # Default RapidOCR box expansion ratio (1.0-3.0)
 
+        # LLM翻訳プロバイダー設定
+        self._llm_base_url = ""
+        self._llm_api_key = ""
+        self._llm_model = ""
+        self._llm_system_prompt = ""
+
         logger.debug("ProviderManager initialized")
+
+    def configure_llm(
+        self,
+        base_url: str = "",
+        api_key: str = "",
+        model: str = "",
+        system_prompt: str = "",
+    ) -> None:
+        """LLM翻訳プロバイダーの設定を更新する。"""
+        if base_url:
+            self._llm_base_url = base_url
+        if api_key:
+            self._llm_api_key = api_key
+        if model:
+            self._llm_model = model
+        if system_prompt:
+            self._llm_system_prompt = system_prompt
+
+        # 既存のLLMプロバイダーインスタンスがあれば更新
+        llm_provider = self._translation_providers.get(ProviderType.LLM)
+        if llm_provider:
+            llm_provider.configure(
+                base_url=base_url, api_key=api_key,
+                model=model, system_prompt=system_prompt
+            )
+        logger.debug(
+            f"LLM config updated: base_url={self._llm_base_url}, "
+            f"model={self._llm_model}"
+        )
 
     def configure(
         self,
@@ -205,6 +242,8 @@ class ProviderManager:
             # Use translation provider preference (independent of OCR choice)
             if self._translation_provider_preference == "googlecloud":
                 provider_type = ProviderType.GOOGLE
+            elif self._translation_provider_preference == "llm":
+                provider_type = ProviderType.LLM
             else:
                 provider_type = ProviderType.FREE_GOOGLE
 
@@ -214,6 +253,13 @@ class ProviderManager:
             elif provider_type == ProviderType.GOOGLE:
                 self._translation_providers[provider_type] = GoogleTranslateProvider(
                     self._google_api_key
+                )
+            elif provider_type == ProviderType.LLM:
+                self._translation_providers[provider_type] = LlmTranslateProvider(
+                    base_url=self._llm_base_url,
+                    api_key=self._llm_api_key,
+                    model=self._llm_model,
+                    system_prompt=self._llm_system_prompt,
                 )
 
         return self._translation_providers.get(provider_type)
