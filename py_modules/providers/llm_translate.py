@@ -127,10 +127,15 @@ class LlmTranslateProvider(TranslationProvider):
             "temperature": temperature,
         }
 
-        # thinkingモード無効化: Ollama等が対応する "think" パラメータを送信
-        # 非対応サーバーは未知のパラメータを無視するため安全
+        # thinkingモード無効化: 各プラットフォーム向けのパラメータを送信
+        # 非対応サーバーは未知のパラメータを無視するため、全て同時に送信して安全
         if self._disable_thinking:
+            # Ollama: chat APIのトップレベルパラメータ
             payload["think"] = False
+            # DashScope (Alibaba Cloud / Qwen3.5-Plus等): enable_thinking
+            payload["enable_thinking"] = False
+            # vLLM: chat_template_kwargs経由
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
 
         try:
             response = requests.post(
@@ -185,25 +190,14 @@ class LlmTranslateProvider(TranslationProvider):
     def get_supported_languages(self) -> List[str]:
         return self.SUPPORTED_LANGUAGES.copy()
 
-    def _maybe_append_no_think(self, text: str) -> str:
-        """disable_thinking有効時、ユーザーメッセージに /no_think を付加する。
-
-        Qwen3等は /no_think をプロンプト末尾に付けるとthinkingを抑制する。
-        非対応モデルはただのテキストとして無視するため安全。
-        """
-        if self._disable_thinking:
-            return text + " /no_think"
-        return text
-
     async def translate(self, text: str, source_lang: str, target_lang: str) -> str:
         if not text or not text.strip():
             return text
 
         system_prompt = self._build_system_prompt(source_lang, target_lang)
-        user_content = self._maybe_append_no_think(text)
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
+            {"role": "user", "content": text},
         ]
 
         logger.debug(f"LLM translate: {source_lang} -> {target_lang}, len={len(text)}")
@@ -237,12 +231,9 @@ class LlmTranslateProvider(TranslationProvider):
             "Do NOT add any extra text or explanations."
         )
 
-        full_user_content = self._maybe_append_no_think(
-            f"{batch_instruction}\n\n{user_content}"
-        )
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": full_user_content},
+            {"role": "user", "content": f"{batch_instruction}\n\n{user_content}"},
         ]
 
         logger.debug(
