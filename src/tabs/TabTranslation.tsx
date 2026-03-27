@@ -472,6 +472,14 @@ export const TabTranslation: VFC = () => {
                                 />
                             </Field>
                         </PanelSectionRow>
+                        <PanelSectionRow>
+                            <ToggleField
+                                label="Thinkingモード無効化"
+                                checked={settings.llmDisableThinking}
+                                onChange={(value) => updateSetting('llmDisableThinking', value, 'LLM Disable Thinking')}
+                                description="DeepSeek-R1, Qwen3等の思考プロセスを抑制し、レスポンス速度とコストを改善"
+                            />
+                        </PanelSectionRow>
                     </>
                 )}
 

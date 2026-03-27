@@ -885,6 +885,7 @@ class Plugin:
     _llm_api_key: str = ""
     _llm_model: str = ""
     _llm_system_prompt: str = ""
+    _llm_disable_thinking: bool = True
 
     # Generic settings handlers
     async def get_setting(self, key, default=None):
@@ -1009,6 +1010,10 @@ class Plugin:
                 self._llm_system_prompt = value
                 if self._provider_manager:
                     self._provider_manager.configure_llm(system_prompt=value)
+            elif key == "llm_disable_thinking":
+                self._llm_disable_thinking = value
+                if self._provider_manager:
+                    self._provider_manager.configure_llm(disable_thinking=value)
             else:
                 logger.warning(f"Unknown setting key: {key}")
 
@@ -1049,6 +1054,7 @@ class Plugin:
                 "llm_api_key": self._llm_api_key,
                 "llm_model": self._llm_model,
                 "llm_system_prompt": self._llm_system_prompt,
+                "llm_disable_thinking": self._llm_disable_thinking,
             }
             return settings
         except Exception as e:
@@ -1689,6 +1695,7 @@ class Plugin:
             self._llm_api_key = self._settings.get_setting("llm_api_key", "")
             self._llm_model = self._settings.get_setting("llm_model", "")
             self._llm_system_prompt = self._settings.get_setting("llm_system_prompt", "")
+            self._llm_disable_thinking = self._settings.get_setting("llm_disable_thinking", True)
 
             # Initialize provider manager
             self._provider_manager = ProviderManager()
@@ -1706,6 +1713,7 @@ class Plugin:
                     api_key=self._llm_api_key,
                     model=self._llm_model,
                     system_prompt=self._llm_system_prompt,
+                    disable_thinking=self._llm_disable_thinking,
                 )
 
             # Load and apply RapidOCR-specific settings

@@ -28,6 +28,7 @@ export interface Settings {
     llmApiKey: string; // LLM API Key
     llmModel: string; // LLMモデル名
     llmSystemPrompt: string; // LLMシステムプロンプト
+    llmDisableThinking: boolean; // LLM thinkingモード無効化
     debugMode: boolean; // Debug mode for verbose console logging
     fontScale: number; // Overlay font scale multiplier for external monitors
     groupingPower: number; // Text grouping aggressiveness (0.25 normal - 1.0 huge)
@@ -65,6 +66,7 @@ const initialSettings: Settings = {
     llmApiKey: "", // LLM API Key
     llmModel: "", // LLMモデル名
     llmSystemPrompt: "", // カスタムシステムプロンプト
+    llmDisableThinking: true, // デフォルトでthinkingモードを無効化
     debugMode: false, // Debug mode off by default
     fontScale: 1.0,
     groupingPower: 0.25,
@@ -137,6 +139,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                     llmApiKey: serverSettings.llm_api_key || "",
                     llmModel: serverSettings.llm_model || "",
                     llmSystemPrompt: serverSettings.llm_system_prompt || "",
+                    llmDisableThinking: serverSettings.llm_disable_thinking ?? true,
                     debugMode: serverSettings.debug_mode || false, // Debug mode
                     fontScale: serverSettings.font_scale ?? 1.0,
                     groupingPower: serverSettings.grouping_power ?? 0.25,
@@ -211,6 +214,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                 llmApiKey: 'llm_api_key',
                 llmModel: 'llm_model',
                 llmSystemPrompt: 'llm_system_prompt',
+                llmDisableThinking: 'llm_disable_thinking',
                 debugMode: 'debug_mode',
                 fontScale: 'font_scale',
                 groupingPower: 'grouping_power',

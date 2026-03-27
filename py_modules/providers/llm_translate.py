@@ -57,14 +57,16 @@ class LlmTranslateProvider(TranslationProvider):
         api_key: str = "",
         model: str = "",
         system_prompt: str = "",
+        disable_thinking: bool = True,
     ):
         self._base_url = base_url.rstrip("/") if base_url else ""
         self._api_key = api_key
         self._model = model
         self._system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
+        self._disable_thinking = disable_thinking
         logger.debug(
             f"LlmTranslateProvider initialized: base_url={self._base_url}, "
-            f"model={self._model}"
+            f"model={self._model}, disable_thinking={self._disable_thinking}"
         )
 
     @property
@@ -81,6 +83,7 @@ class LlmTranslateProvider(TranslationProvider):
         api_key: str = "",
         model: str = "",
         system_prompt: str = "",
+        disable_thinking: bool = None,
     ) -> None:
         """設定を更新する。"""
         if base_url:
@@ -91,6 +94,8 @@ class LlmTranslateProvider(TranslationProvider):
             self._model = model
         if system_prompt:
             self._system_prompt = system_prompt
+        if disable_thinking is not None:
+            self._disable_thinking = disable_thinking
 
     def _get_language_name(self, lang_code: str) -> str:
         """言語コードを自然言語名に変換する。"""
@@ -121,6 +126,11 @@ class LlmTranslateProvider(TranslationProvider):
             "messages": messages,
             "temperature": temperature,
         }
+
+        # thinkingモード無効化: Ollama等が対応する "think" パラメータを送信
+        # 非対応サーバーは未知のパラメータを無視するため安全
+        if self._disable_thinking:
+            payload["think"] = False
 
         try:
             response = requests.post(
@@ -175,14 +185,25 @@ class LlmTranslateProvider(TranslationProvider):
     def get_supported_languages(self) -> List[str]:
         return self.SUPPORTED_LANGUAGES.copy()
 
+    def _maybe_append_no_think(self, text: str) -> str:
+        """disable_thinking有効時、ユーザーメッセージに /no_think を付加する。
+
+        Qwen3等は /no_think をプロンプト末尾に付けるとthinkingを抑制する。
+        非対応モデルはただのテキストとして無視するため安全。
+        """
+        if self._disable_thinking:
+            return text + " /no_think"
+        return text
+
     async def translate(self, text: str, source_lang: str, target_lang: str) -> str:
         if not text or not text.strip():
             return text
 
         system_prompt = self._build_system_prompt(source_lang, target_lang)
+        user_content = self._maybe_append_no_think(text)
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": text},
+            {"role": "user", "content": user_content},
         ]
 
         logger.debug(f"LLM translate: {source_lang} -> {target_lang}, len={len(text)}")
@@ -216,9 +237,12 @@ class LlmTranslateProvider(TranslationProvider):
             "Do NOT add any extra text or explanations."
         )
 
+        full_user_content = self._maybe_append_no_think(
+            f"{batch_instruction}\n\n{user_content}"
+        )
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"{batch_instruction}\n\n{user_content}"},
+            {"role": "user", "content": full_user_content},
         ]
 
         logger.debug(

@@ -64,6 +64,7 @@ class ProviderManager:
         self._llm_api_key = ""
         self._llm_model = ""
         self._llm_system_prompt = ""
+        self._llm_disable_thinking = True
 
         logger.debug("ProviderManager initialized")
 
@@ -73,6 +74,7 @@ class ProviderManager:
         api_key: str = "",
         model: str = "",
         system_prompt: str = "",
+        disable_thinking: bool = None,
     ) -> None:
         """LLM翻訳プロバイダーの設定を更新する。"""
         if base_url:
@@ -83,17 +85,20 @@ class ProviderManager:
             self._llm_model = model
         if system_prompt:
             self._llm_system_prompt = system_prompt
+        if disable_thinking is not None:
+            self._llm_disable_thinking = disable_thinking
 
         # 既存のLLMプロバイダーインスタンスがあれば更新
         llm_provider = self._translation_providers.get(ProviderType.LLM)
         if llm_provider:
             llm_provider.configure(
                 base_url=base_url, api_key=api_key,
-                model=model, system_prompt=system_prompt
+                model=model, system_prompt=system_prompt,
+                disable_thinking=disable_thinking,
             )
         logger.debug(
             f"LLM config updated: base_url={self._llm_base_url}, "
-            f"model={self._llm_model}"
+            f"model={self._llm_model}, disable_thinking={self._llm_disable_thinking}"
         )
 
     def configure(
@@ -260,6 +265,7 @@ class ProviderManager:
                     api_key=self._llm_api_key,
                     model=self._llm_model,
                     system_prompt=self._llm_system_prompt,
+                    disable_thinking=self._llm_disable_thinking,
                 )
 
         return self._translation_providers.get(provider_type)
