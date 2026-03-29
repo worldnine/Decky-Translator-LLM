@@ -186,13 +186,21 @@ export const TabMain: VFC<TabMainProps> = ({ logic, overlayVisible, providerStat
                                     <BsTranslate style={{ marginRight: '8px', color: '#aaa' }} />
                                     <span style={{ color: '#888' }}>Translation:</span>
                                     <span style={{ marginLeft: '6px', fontWeight: 'bold' }}>
-                                        {settings.translationProvider === 'googlecloud' ? 'Google Cloud' : 'Google Translate'}
+                                        {settings.translationProvider === 'googlecloud' ? 'Google Cloud' :
+                                         settings.translationProvider === 'llm' ? 'LLM (OpenAI-compatible)' : 'Google Translate'}
                                     </span>
                                 </div>
                                 <div style={{ marginLeft: '22px', marginBottom: '6px' }}>
                                     {settings.translationProvider === 'googlecloud' && (
                                         <div style={{ color: settings.googleApiKey ? '#666' : '#ff6b6b', fontSize: '10px' }}>
                                             {settings.googleApiKey ? 'API key configured' : 'API key required'}
+                                        </div>
+                                    )}
+                                    {settings.translationProvider === 'llm' && (
+                                        <div style={{ color: (settings.llmBaseUrl && settings.llmModel) ? '#666' : '#ff6b6b', fontSize: '10px' }}>
+                                            {(settings.llmBaseUrl && settings.llmModel)
+                                                ? `Model: ${settings.llmModel}`
+                                                : 'Base URL and Model required'}
                                         </div>
                                     )}
                                     <div style={{ color: '#666', fontSize: '10px' }}>

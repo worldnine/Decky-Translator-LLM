@@ -14,15 +14,19 @@ from .base import TranslationProvider, ProviderType, NetworkError, ApiKeyError
 
 logger = logging.getLogger(__name__)
 
-# デフォルトのシステムプロンプト
-DEFAULT_SYSTEM_PROMPT = (
+# ベースのシステムプロンプト（常に使用、言語指定を含む）
+BASE_SYSTEM_PROMPT = (
     "You are a game text translator. "
     "Translate the following text from {source_lang} to {target_lang}. "
     "Translate ONLY the text, preserve any formatting. "
     "Return translations in the same order, one per line. "
     "If the input appears to be a UI element or game term, keep it natural for gamers. "
-    "Do NOT add any explanations, notes, or extra text."
+    "Do NOT add any explanations, notes, extra text, or acknowledgments like 'Understood'. "
+    "NEVER respond with anything other than the translation itself."
 )
+
+# デフォルトのシステムプロンプト（カスタムプロンプト未設定時のフルプロンプト）
+DEFAULT_SYSTEM_PROMPT = BASE_SYSTEM_PROMPT
 
 
 class LlmTranslateProvider(TranslationProvider):
@@ -62,7 +66,7 @@ class LlmTranslateProvider(TranslationProvider):
         self._base_url = base_url.rstrip("/") if base_url else ""
         self._api_key = api_key
         self._model = model
-        self._system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
+        self._custom_prompt = system_prompt  # ユーザーのカスタム追加指示（空なら使わない）
         self._disable_thinking = disable_thinking
         logger.debug(
             f"LlmTranslateProvider initialized: base_url={self._base_url}, "
@@ -79,21 +83,21 @@ class LlmTranslateProvider(TranslationProvider):
 
     def configure(
         self,
-        base_url: str = "",
-        api_key: str = "",
-        model: str = "",
-        system_prompt: str = "",
+        base_url: str = None,
+        api_key: str = None,
+        model: str = None,
+        system_prompt: str = None,
         disable_thinking: bool = None,
     ) -> None:
-        """設定を更新する。"""
-        if base_url:
-            self._base_url = base_url.rstrip("/")
-        if api_key:
+        """設定を更新する。Noneでない値のみ更新（空文字列での明示的クリアに対応）。"""
+        if base_url is not None:
+            self._base_url = base_url.rstrip("/") if base_url else ""
+        if api_key is not None:
             self._api_key = api_key
-        if model:
+        if model is not None:
             self._model = model
-        if system_prompt:
-            self._system_prompt = system_prompt
+        if system_prompt is not None:
+            self._custom_prompt = system_prompt
         if disable_thinking is not None:
             self._disable_thinking = disable_thinking
 
@@ -102,12 +106,19 @@ class LlmTranslateProvider(TranslationProvider):
         return self.LANGUAGE_NAMES.get(lang_code, lang_code)
 
     def _build_system_prompt(self, source_lang: str, target_lang: str) -> str:
-        """翻訳用のシステムプロンプトを構築する。"""
+        """翻訳用のシステムプロンプトを構築する。
+
+        ベースプロンプト（言語指定含む）は常に使用し、
+        ユーザーのカスタムプロンプトがあれば追加指示として末尾に付加する。
+        """
         src_name = self._get_language_name(source_lang)
         tgt_name = self._get_language_name(target_lang)
-        return self._system_prompt.format(
+        base = BASE_SYSTEM_PROMPT.format(
             source_lang=src_name, target_lang=tgt_name
         )
+        if self._custom_prompt:
+            return f"{base}\n\nAdditional instructions: {self._custom_prompt}"
+        return base
 
     def _call_api(self, messages: list, temperature: float = 0.1) -> str:
         """OpenAI API互換エンドポイントを呼び出す。"""

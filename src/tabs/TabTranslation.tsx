@@ -347,7 +347,7 @@ export const TabTranslation: VFC = () => {
                                 rgOptions={[
                                     { label: <span>Google Translate</span>, data: "freegoogle" },
                                     { label: <span>Google Cloud</span>, data: "googlecloud" },
-                                    { label: <span>LLM (OpenAI互換)</span>, data: "llm" }
+                                    { label: <span>LLM (OpenAI-compatible)</span>, data: "llm" }
                                 ]}
                                 selectedOption={settings.translationProvider}
                                 onChange={(option) => updateSetting('translationProvider', option.data, 'Translation provider')}
@@ -415,13 +415,13 @@ export const TabTranslation: VFC = () => {
                                 <>
                                     <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
                                         <span style={{ fontSize: "18px" }}>🤖</span>
-                                        <span style={{ fontWeight: "bold", color: "#dcdedf" }}>LLM Translation (OpenAI互換)</span>
+                                        <span style={{ fontWeight: "bold", color: "#dcdedf" }}>LLM Translation (OpenAI-compatible)</span>
                                     </div>
-                                    <div>- コンテキストを考慮した高品質翻訳</div>
-                                    <div>- Gemini, GPT, DeepSeek, Ollama等に対応</div>
-                                    <div>- API Key, Base URL, Model名の設定が必要</div>
+                                    <div>- Context-aware, high-quality translation</div>
+                                    <div>- Supports Gemini, GPT, DeepSeek, Ollama, etc.</div>
+                                    <div>- Requires API Key, Base URL, and Model name</div>
                                     {(!settings.llmBaseUrl || !settings.llmModel) && (
-                                        <div style={{ color: "#ff6b6b", marginTop: "4px" }}>Base URLとModel名を設定してください</div>
+                                        <div style={{ color: "#ff6b6b", marginTop: "4px" }}>Please configure Base URL and Model name</div>
                                     )}
                                 </>
                             )}
@@ -437,7 +437,7 @@ export const TabTranslation: VFC = () => {
                                     value={settings.llmBaseUrl}
                                     onChange={(e) => updateSetting('llmBaseUrl', e.target.value, 'LLM Base URL')}
                                     bShowClearAction={true}
-                                    description="例: https://api.openai.com, http://localhost:11434"
+                                    description="e.g. https://api.openai.com, http://localhost:11434"
                                 />
                             </Field>
                         </PanelSectionRow>
@@ -448,7 +448,7 @@ export const TabTranslation: VFC = () => {
                                     onChange={(e) => updateSetting('llmApiKey', e.target.value, 'LLM API Key')}
                                     bShowClearAction={true}
                                     bIsPassword={true}
-                                    description="Ollamaなどローカルサーバーの場合は空欄でOK"
+                                    description="Leave empty for local servers like Ollama"
                                 />
                             </Field>
                         </PanelSectionRow>
@@ -458,26 +458,26 @@ export const TabTranslation: VFC = () => {
                                     value={settings.llmModel}
                                     onChange={(e) => updateSetting('llmModel', e.target.value, 'LLM Model')}
                                     bShowClearAction={true}
-                                    description="例: gemini-2.0-flash, gpt-4o-mini, deepseek-chat"
+                                    description="e.g. gemini-2.0-flash, gpt-4o-mini, deepseek-chat"
                                 />
                             </Field>
                         </PanelSectionRow>
                         <PanelSectionRow>
-                            <Field label="System Prompt (任意)" childrenContainerWidth="max">
+                            <Field label="Additional Instructions (optional)" childrenContainerWidth="max">
                                 <TextField
                                     value={settings.llmSystemPrompt}
                                     onChange={(e) => updateSetting('llmSystemPrompt', e.target.value, 'LLM System Prompt')}
                                     bShowClearAction={true}
-                                    description="カスタムプロンプト（空欄でデフォルト使用）"
+                                    description="Extra instructions appended to the base translation prompt"
                                 />
                             </Field>
                         </PanelSectionRow>
                         <PanelSectionRow>
                             <ToggleField
-                                label="Thinkingモード無効化"
+                                label="Disable Thinking Mode"
                                 checked={settings.llmDisableThinking}
                                 onChange={(value) => updateSetting('llmDisableThinking', value, 'LLM Disable Thinking')}
-                                description="DeepSeek-R1, Qwen3等の思考プロセスを抑制し、レスポンス速度とコストを改善"
+                                description="Suppress thinking process in DeepSeek-R1, Qwen3, etc. to improve speed and reduce cost"
                             />
                         </PanelSectionRow>
                     </>

@@ -70,20 +70,20 @@ class ProviderManager:
 
     def configure_llm(
         self,
-        base_url: str = "",
-        api_key: str = "",
-        model: str = "",
-        system_prompt: str = "",
+        base_url: str = None,
+        api_key: str = None,
+        model: str = None,
+        system_prompt: str = None,
         disable_thinking: bool = None,
     ) -> None:
         """LLM翻訳プロバイダーの設定を更新する。"""
-        if base_url:
+        if base_url is not None:
             self._llm_base_url = base_url
-        if api_key:
+        if api_key is not None:
             self._llm_api_key = api_key
-        if model:
+        if model is not None:
             self._llm_model = model
-        if system_prompt:
+        if system_prompt is not None:
             self._llm_system_prompt = system_prompt
         if disable_thinking is not None:
             self._llm_disable_thinking = disable_thinking
