@@ -266,37 +266,66 @@ class LlmTranslateProvider(TranslationProvider):
             result = await asyncio.to_thread(self._call_api, messages)
             translated = self._parse_batch_response(result, len(texts))
 
-            if len(translated) == len(texts):
+            # 欠落している翻訳を特定
+            missing_indices = [i for i, t in enumerate(translated) if t is None]
+
+            if not missing_indices:
                 return translated
 
-            # 行数が一致しない場合、個別に翻訳にフォールバック
+            # 欠落分だけ個別翻訳で補完
             logger.warning(
-                f"LLM batch response line mismatch: expected {len(texts)}, "
-                f"got {len(translated)}. Falling back to individual translation."
+                f"LLM batch: {len(missing_indices)}/{len(texts)} translations missing "
+                f"(indices: {missing_indices}), fetching individually"
             )
-            return await self._translate_individually(texts, source_lang, target_lang)
+            for i in missing_indices:
+                try:
+                    translated[i] = await self.translate(
+                        texts[i], source_lang, target_lang
+                    )
+                except Exception as e:
+                    logger.warning(f"Individual translation failed for [{i+1}]: {e}")
+                    translated[i] = texts[i]  # 原文をそのまま返す
+
+            return translated
 
         except Exception as e:
             logger.error(f"LLM batch translation error: {e}")
             # エラー時は個別翻訳にフォールバック
             return await self._translate_individually(texts, source_lang, target_lang)
 
+    # バッチレスポンスの [N] 番号を厳密にマッチする正規表現
+    _NUM_PREFIX_RE = re.compile(r"^\[(\d+)\]\s*(.*)")
+
     def _parse_batch_response(self, response: str, expected_count: int) -> List[str]:
-        """バッチレスポンスをパースして翻訳テキストのリストを返す。"""
+        """バッチレスポンスをパースして翻訳テキストのリストを返す。
+
+        [N] 番号を使って正しい位置にマッピングする。
+        番号なしの行は直前の番号の続き（LLMが改行で分割した場合）として結合する。
+        番号が欠落している場合はNoneを返す。
+        """
         lines = response.strip().split("\n")
-        translations = []
+        result_map: dict = {}
+        current_num = None
 
         for line in lines:
             line = line.strip()
             if not line:
                 continue
-            # [N] プレフィックスを除去
-            if line.startswith("[") and "]" in line:
-                bracket_end = line.index("]")
-                line = line[bracket_end + 1:].strip()
-            translations.append(line)
 
-        return translations
+            match = self._NUM_PREFIX_RE.match(line)
+            if match:
+                num = int(match.group(1))
+                text = match.group(2)
+                if 1 <= num <= expected_count:
+                    current_num = num
+                    result_map[num] = text
+                # 範囲外の番号は無視
+            elif current_num is not None:
+                # 番号なし行: 直前の翻訳の続き（LLMが改行で分割した場合）
+                result_map[current_num] += " " + line
+
+        # 連番で結果を組み立て（欠落はNone）
+        return [result_map.get(i) for i in range(1, expected_count + 1)]
 
     async def _translate_individually(
         self, texts: List[str], source_lang: str, target_lang: str
