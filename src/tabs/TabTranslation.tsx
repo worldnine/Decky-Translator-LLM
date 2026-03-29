@@ -468,7 +468,7 @@ export const TabTranslation: VFC = () => {
                                     value={settings.llmSystemPrompt}
                                     onChange={(e) => updateSetting('llmSystemPrompt', e.target.value, 'LLM System Prompt')}
                                     bShowClearAction={true}
-                                    description="Extra instructions appended to the base translation prompt"
+                                    description="e.g. This is a fantasy RPG. Keep character names untranslated. Glossary: Ether=エーテル"
                                 />
                             </Field>
                         </PanelSectionRow>
