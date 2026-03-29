@@ -1,5 +1,5 @@
 {
-  "name": "decky-translator",
+  "name": "decky-translator-llm",
   "version": "0.8.0",
   "type": "module",
   "description": "Translate anything on screen to your language. Works with any game or application - a great tool for language learning or enjoying untranslated games",
@@ -11,7 +11,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cat-in-a-box/decky-translator.git"
+    "url": "git+https://github.com/worldnine/Decky-Translator-LLM.git"
   },
   "keywords": [
     "decky",
@@ -21,12 +21,12 @@
     "steam-deck",
     "deck"
   ],
-  "author": "cat-in-a-box",
+  "author": "@world9",
   "license": "GNU GPLv3",
   "bugs": {
-    "url": "https://github.com/cat-in-a-box/decky-translator/issues"
+    "url": "https://github.com/worldnine/Decky-Translator-LLM/issues"
   },
-  "homepage": "https://github.com/cat-in-a-box/decky-translator",
+  "homepage": "https://github.com/worldnine/Decky-Translator-LLM",
   "devDependencies": {
     "@decky/api": "^1.1.3",
     "@decky/rollup": "^1.0.1",
