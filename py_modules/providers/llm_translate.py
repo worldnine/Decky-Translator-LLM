@@ -135,7 +135,7 @@ class LlmTranslateProvider(TranslationProvider):
         if not self._base_url or not self._model:
             raise ApiKeyError("LLM base_url and model must be configured")
 
-        url = f"{self._base_url}/v1/chat/completions"
+        url = f"{self._base_url}/chat/completions"
         headers = {
             "Content-Type": "application/json",
         }
