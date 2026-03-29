@@ -79,3 +79,4 @@ cli/
 /docs
 /nul
 mise.toml
+deploy.sh
