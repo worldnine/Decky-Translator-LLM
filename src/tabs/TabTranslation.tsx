@@ -437,7 +437,7 @@ export const TabTranslation: VFC = () => {
                                     value={settings.llmBaseUrl}
                                     onChange={(e) => updateSetting('llmBaseUrl', e.target.value, 'LLM Base URL')}
                                     bShowClearAction={true}
-                                    description="e.g. https://api.openai.com, http://localhost:11434"
+                                    description="e.g. https://api.openai.com/v1, http://localhost:11434/v1"
                                 />
                             </Field>
                         </PanelSectionRow>
@@ -458,7 +458,7 @@ export const TabTranslation: VFC = () => {
                                     value={settings.llmModel}
                                     onChange={(e) => updateSetting('llmModel', e.target.value, 'LLM Model')}
                                     bShowClearAction={true}
-                                    description="e.g. gemini-2.0-flash, gpt-4o-mini, deepseek-chat"
+                                    description="e.g. gemini-2.5-flash-lite, gpt-5.4-mini, deepseek-chat"
                                 />
                             </Field>
                         </PanelSectionRow>
