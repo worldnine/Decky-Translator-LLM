@@ -494,18 +494,30 @@ export const TabTranslation: VFC = () => {
                             />
                         </PanelSectionRow>
                         {settings.llmImageRerecognition && settings.ocrProvider !== 'ocrspace' && (
-                            <PanelSectionRow>
-                                <SliderField
-                                    label="Confidence Threshold"
-                                    value={settings.llmImageConfidenceThreshold}
-                                    min={0.1}
-                                    max={0.9}
-                                    step={0.1}
-                                    showValue={true}
-                                    onChange={(value) => updateSetting('llmImageConfidenceThreshold', value, 'LLM Image Confidence Threshold')}
-                                    description="Regions below this OCR confidence will be sent as images to the LLM"
-                                />
-                            </PanelSectionRow>
+                            <>
+                                <PanelSectionRow>
+                                    <ToggleField
+                                        label="Send All Regions as Images"
+                                        checked={settings.llmImageSendAll}
+                                        onChange={(value) => updateSetting('llmImageSendAll', value, 'LLM Image Send All')}
+                                        description="Send all text regions as images regardless of confidence. Slower but most accurate."
+                                    />
+                                </PanelSectionRow>
+                                {!settings.llmImageSendAll && (
+                                    <PanelSectionRow>
+                                        <SliderField
+                                            label="Confidence Threshold"
+                                            value={settings.llmImageConfidenceThreshold}
+                                            min={0.5}
+                                            max={1.0}
+                                            step={0.05}
+                                            showValue={true}
+                                            onChange={(value) => updateSetting('llmImageConfidenceThreshold', value, 'LLM Image Confidence Threshold')}
+                                            description="Regions below this OCR confidence will be sent as images to the LLM"
+                                        />
+                                    </PanelSectionRow>
+                                )}
+                            </>
                         )}
                     </>
                 )}

@@ -72,7 +72,8 @@ class ProviderManager:
 
         # LLM画像再認識設定
         self._llm_image_rerecognition = False
-        self._llm_image_confidence_threshold = 0.5
+        self._llm_image_confidence_threshold = 0.95
+        self._llm_image_send_all = False
 
         logger.debug("ProviderManager initialized")
 
@@ -85,6 +86,7 @@ class ProviderManager:
         disable_thinking: bool = None,
         image_rerecognition: bool = None,
         image_confidence_threshold: float = None,
+        image_send_all: bool = None,
     ) -> None:
         """LLM翻訳プロバイダーの設定を更新する。"""
         if base_url is not None:
@@ -101,6 +103,8 @@ class ProviderManager:
             self._llm_image_rerecognition = image_rerecognition
         if image_confidence_threshold is not None:
             self._llm_image_confidence_threshold = image_confidence_threshold
+        if image_send_all is not None:
+            self._llm_image_send_all = image_send_all
 
         # 既存のLLMプロバイダーインスタンスがあれば更新
         llm_provider = self._translation_providers.get(ProviderType.LLM)
@@ -372,21 +376,25 @@ class ProviderManager:
         """低信頼度領域を画像付きでLLMに翻訳依頼し、高信頼度領域はテキストのみで処理する。"""
         threshold = self._llm_image_confidence_threshold
 
-        # 高信頼度と低信頼度に分類
+        # 全件送信モードまたは閾値ベースで分類
         high_conf_indices = []
         low_conf_indices = []
         for i, region in enumerate(text_regions):
             if i >= len(texts):
                 break
             confidence = region.get("confidence", 1.0)
-            if confidence < threshold:
+            logger.debug(
+                f"  region[{i}] confidence={confidence:.3f} text='{texts[i][:30]}'"
+            )
+            if self._llm_image_send_all or confidence < threshold:
                 low_conf_indices.append(i)
             else:
                 high_conf_indices.append(i)
 
+        mode_label = "全件画像送信" if self._llm_image_send_all else f"閾値{threshold}"
         logger.info(
-            f"画像再認識: {len(low_conf_indices)}/{len(texts)} regions below "
-            f"threshold {threshold} (indices: {low_conf_indices})"
+            f"画像再認識({mode_label}): {len(low_conf_indices)}/{len(texts)} regions "
+            f"(indices: {low_conf_indices})"
         )
 
         # 結果配列を初期化
@@ -409,6 +417,10 @@ class ProviderManager:
             for idx in low_conf_indices:
                 region = text_regions[idx]
                 try:
+                    logger.debug(
+                        f"画像再認識実行: index={idx}, text='{texts[idx][:40]}', "
+                        f"rect={region.get('rect')}"
+                    )
                     crop_b64 = self._crop_region_base64(image_bytes, region["rect"])
                     if crop_b64:
                         translated = await provider.translate_with_image(
@@ -420,7 +432,7 @@ class ProviderManager:
                         )
                         results[idx] = translated
                     else:
-                        # 切り出し失敗時はテキストのみで翻訳
+                        logger.warning(f"  切り出し失敗、テキストのみで翻訳")
                         results[idx] = await provider.translate(
                             texts[idx], source_lang, target_lang
                         )

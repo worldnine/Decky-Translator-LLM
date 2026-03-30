@@ -887,7 +887,8 @@ class Plugin:
     _llm_system_prompt: str = ""
     _llm_disable_thinking: bool = True
     _llm_image_rerecognition: bool = False
-    _llm_image_confidence_threshold: float = 0.5
+    _llm_image_confidence_threshold: float = 0.95
+    _llm_image_send_all: bool = False
 
     # Generic settings handlers
     async def get_setting(self, key, default=None):
@@ -1024,6 +1025,10 @@ class Plugin:
                 self._llm_image_confidence_threshold = value
                 if self._provider_manager:
                     self._provider_manager.configure_llm(image_confidence_threshold=value)
+            elif key == "llm_image_send_all":
+                self._llm_image_send_all = value
+                if self._provider_manager:
+                    self._provider_manager.configure_llm(image_send_all=value)
             else:
                 logger.warning(f"Unknown setting key: {key}")
 
@@ -1067,6 +1072,7 @@ class Plugin:
                 "llm_disable_thinking": self._llm_disable_thinking,
                 "llm_image_rerecognition": self._llm_image_rerecognition,
                 "llm_image_confidence_threshold": self._llm_image_confidence_threshold,
+                "llm_image_send_all": self._llm_image_send_all,
             }
             return settings
         except Exception as e:
@@ -1722,7 +1728,8 @@ class Plugin:
             self._llm_system_prompt = self._settings.get_setting("llm_system_prompt", "")
             self._llm_disable_thinking = self._settings.get_setting("llm_disable_thinking", True)
             self._llm_image_rerecognition = self._settings.get_setting("llm_image_rerecognition", False)
-            self._llm_image_confidence_threshold = self._settings.get_setting("llm_image_confidence_threshold", 0.5)
+            self._llm_image_confidence_threshold = self._settings.get_setting("llm_image_confidence_threshold", 0.95)
+            self._llm_image_send_all = self._settings.get_setting("llm_image_send_all", False)
 
             # Initialize provider manager
             self._provider_manager = ProviderManager()
@@ -1743,6 +1750,7 @@ class Plugin:
                     disable_thinking=self._llm_disable_thinking,
                     image_rerecognition=self._llm_image_rerecognition,
                     image_confidence_threshold=self._llm_image_confidence_threshold,
+                    image_send_all=self._llm_image_send_all,
                 )
 
             # Load and apply RapidOCR-specific settings
