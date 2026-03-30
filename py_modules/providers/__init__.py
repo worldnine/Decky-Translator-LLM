@@ -1,6 +1,7 @@
 # providers/__init__.py
 # Provider factory and manager
 
+import asyncio
 import base64
 import io
 import logging
@@ -74,6 +75,7 @@ class ProviderManager:
         self._llm_image_rerecognition = False
         self._llm_image_confidence_threshold = 0.95
         self._llm_image_send_all = False
+        self._llm_image_parallel = False
 
         logger.debug("ProviderManager initialized")
 
@@ -87,6 +89,7 @@ class ProviderManager:
         image_rerecognition: bool = None,
         image_confidence_threshold: float = None,
         image_send_all: bool = None,
+        image_parallel: bool = None,
     ) -> None:
         """LLM翻訳プロバイダーの設定を更新する。"""
         if base_url is not None:
@@ -105,6 +108,8 @@ class ProviderManager:
             self._llm_image_confidence_threshold = image_confidence_threshold
         if image_send_all is not None:
             self._llm_image_send_all = image_send_all
+        if image_parallel is not None:
+            self._llm_image_parallel = image_parallel
 
         # 既存のLLMプロバイダーインスタンスがあれば更新
         llm_provider = self._translation_providers.get(ProviderType.LLM)
@@ -412,40 +417,113 @@ class ProviderManager:
             except Exception as e:
                 logger.error(f"高信頼度テキストのバッチ翻訳エラー: {e}")
 
-        # 低信頼度テキストは画像付きで個別翻訳
+        # 低信頼度テキストは画像付きで翻訳
         if low_conf_indices:
-            for idx in low_conf_indices:
-                region = text_regions[idx]
-                try:
-                    logger.debug(
-                        f"画像再認識実行: index={idx}, text='{texts[idx][:40]}', "
-                        f"rect={region.get('rect')}"
-                    )
-                    crop_b64 = self._crop_region_base64(image_bytes, region["rect"])
-                    if crop_b64:
-                        translated = await provider.translate_with_image(
-                            ocr_text=texts[idx],
-                            image_base64=crop_b64,
-                            confidence=region.get("confidence", 0.0),
-                            source_lang=source_lang,
-                            target_lang=target_lang,
-                        )
-                        results[idx] = translated
-                    else:
-                        logger.warning(f"  切り出し失敗、テキストのみで翻訳")
-                        results[idx] = await provider.translate(
-                            texts[idx], source_lang, target_lang
-                        )
-                except Exception as e:
-                    logger.warning(f"画像再認識翻訳エラー (index {idx}): {e}")
-                    try:
-                        results[idx] = await provider.translate(
-                            texts[idx], source_lang, target_lang
-                        )
-                    except Exception:
-                        pass  # 原文のまま
+            if self._llm_image_parallel:
+                await self._translate_images_parallel(
+                    provider, texts, text_regions, image_bytes,
+                    low_conf_indices, results, source_lang, target_lang,
+                )
+            else:
+                await self._translate_images_sequential(
+                    provider, texts, text_regions, image_bytes,
+                    low_conf_indices, results, source_lang, target_lang,
+                )
 
         return results
+
+    async def _translate_images_sequential(
+        self,
+        provider: LlmTranslateProvider,
+        texts: List[str],
+        text_regions: List[dict],
+        image_bytes: bytes,
+        indices: List[int],
+        results: List[str],
+        source_lang: str,
+        target_lang: str,
+    ) -> None:
+        """画像付き翻訳を逐次実行する。"""
+        for idx in indices:
+            region = text_regions[idx]
+            try:
+                crop_b64 = self._crop_region_base64(image_bytes, region["rect"])
+                if crop_b64:
+                    results[idx] = await provider.translate_with_image(
+                        ocr_text=texts[idx],
+                        image_base64=crop_b64,
+                        confidence=region.get("confidence", 0.0),
+                        source_lang=source_lang,
+                        target_lang=target_lang,
+                    )
+                else:
+                    logger.warning(f"  切り出し失敗、テキストのみで翻訳 (index {idx})")
+                    results[idx] = await provider.translate(
+                        texts[idx], source_lang, target_lang
+                    )
+            except Exception as e:
+                logger.warning(f"画像再認識翻訳エラー (index {idx}): {e}")
+                try:
+                    results[idx] = await provider.translate(
+                        texts[idx], source_lang, target_lang
+                    )
+                except Exception:
+                    pass  # 原文のまま
+
+    async def _translate_images_parallel(
+        self,
+        provider: LlmTranslateProvider,
+        texts: List[str],
+        text_regions: List[dict],
+        image_bytes: bytes,
+        indices: List[int],
+        results: List[str],
+        source_lang: str,
+        target_lang: str,
+    ) -> None:
+        """画像付き翻訳を並列実行する（asyncio.gather）。"""
+        # 先に全regionの画像を切り出し（サブプロセスなので逐次）
+        crops = {}
+        for idx in indices:
+            crops[idx] = self._crop_region_base64(
+                image_bytes, text_regions[idx]["rect"]
+            )
+
+        # 並列API呼び出し用のコルーチンを構築
+        async def _translate_one(idx: int) -> tuple:
+            crop_b64 = crops.get(idx)
+            try:
+                if crop_b64:
+                    translated = await provider.translate_with_image(
+                        ocr_text=texts[idx],
+                        image_base64=crop_b64,
+                        confidence=text_regions[idx].get("confidence", 0.0),
+                        source_lang=source_lang,
+                        target_lang=target_lang,
+                    )
+                    return idx, translated
+                else:
+                    logger.warning(f"  切り出し失敗、テキストのみで翻訳 (index {idx})")
+                    translated = await provider.translate(
+                        texts[idx], source_lang, target_lang
+                    )
+                    return idx, translated
+            except Exception as e:
+                logger.warning(f"画像再認識翻訳エラー (index {idx}): {e}")
+                try:
+                    translated = await provider.translate(
+                        texts[idx], source_lang, target_lang
+                    )
+                    return idx, translated
+                except Exception:
+                    return idx, None
+
+        gathered = await asyncio.gather(
+            *[_translate_one(idx) for idx in indices]
+        )
+        for idx, translated in gathered:
+            if translated is not None:
+                results[idx] = translated
 
     @staticmethod
     def _crop_region_base64(image_bytes: bytes, rect: dict) -> Optional[str]:

@@ -889,6 +889,7 @@ class Plugin:
     _llm_image_rerecognition: bool = False
     _llm_image_confidence_threshold: float = 0.95
     _llm_image_send_all: bool = False
+    _llm_image_parallel: bool = False
 
     # Generic settings handlers
     async def get_setting(self, key, default=None):
@@ -1029,6 +1030,10 @@ class Plugin:
                 self._llm_image_send_all = value
                 if self._provider_manager:
                     self._provider_manager.configure_llm(image_send_all=value)
+            elif key == "llm_image_parallel":
+                self._llm_image_parallel = value
+                if self._provider_manager:
+                    self._provider_manager.configure_llm(image_parallel=value)
             else:
                 logger.warning(f"Unknown setting key: {key}")
 
@@ -1073,6 +1078,7 @@ class Plugin:
                 "llm_image_rerecognition": self._llm_image_rerecognition,
                 "llm_image_confidence_threshold": self._llm_image_confidence_threshold,
                 "llm_image_send_all": self._llm_image_send_all,
+                "llm_image_parallel": self._llm_image_parallel,
             }
             return settings
         except Exception as e:
@@ -1730,6 +1736,7 @@ class Plugin:
             self._llm_image_rerecognition = self._settings.get_setting("llm_image_rerecognition", False)
             self._llm_image_confidence_threshold = self._settings.get_setting("llm_image_confidence_threshold", 0.95)
             self._llm_image_send_all = self._settings.get_setting("llm_image_send_all", False)
+            self._llm_image_parallel = self._settings.get_setting("llm_image_parallel", False)
 
             # Initialize provider manager
             self._provider_manager = ProviderManager()
@@ -1751,6 +1758,7 @@ class Plugin:
                     image_rerecognition=self._llm_image_rerecognition,
                     image_confidence_threshold=self._llm_image_confidence_threshold,
                     image_send_all=self._llm_image_send_all,
+                    image_parallel=self._llm_image_parallel,
                 )
 
             # Load and apply RapidOCR-specific settings

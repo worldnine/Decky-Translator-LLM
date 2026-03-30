@@ -517,6 +517,14 @@ export const TabTranslation: VFC = () => {
                                         />
                                     </PanelSectionRow>
                                 )}
+                                <PanelSectionRow>
+                                    <ToggleField
+                                        label="Parallel API Calls"
+                                        checked={settings.llmImageParallel}
+                                        onChange={(value) => updateSetting('llmImageParallel', value, 'LLM Image Parallel')}
+                                        description="Send image translation requests in parallel. Faster with cloud APIs, may cause issues with local servers like Ollama."
+                                    />
+                                </PanelSectionRow>
                             </>
                         )}
                     </>
