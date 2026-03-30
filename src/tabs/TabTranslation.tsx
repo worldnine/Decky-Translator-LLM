@@ -463,16 +463,6 @@ export const TabTranslation: VFC = () => {
                             </Field>
                         </PanelSectionRow>
                         <PanelSectionRow>
-                            <Field label="Additional Instructions (optional)" childrenContainerWidth="max">
-                                <TextField
-                                    value={settings.llmSystemPrompt}
-                                    onChange={(e) => updateSetting('llmSystemPrompt', e.target.value, 'LLM System Prompt')}
-                                    bShowClearAction={true}
-                                    description="e.g. This is a fantasy RPG. Keep character names untranslated. Glossary: Ether=エーテル"
-                                />
-                            </Field>
-                        </PanelSectionRow>
-                        <PanelSectionRow>
                             <ToggleField
                                 label="Disable Thinking Mode"
                                 checked={settings.llmDisableThinking}

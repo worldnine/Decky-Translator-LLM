@@ -891,6 +891,9 @@ class Plugin:
     _llm_image_send_all: bool = False
     _llm_parallel: bool = True
 
+    # ゲーム別プロンプト（現在適用中のゲーム別プロンプト内容）
+    _current_game_prompt: str = ""
+
     # Generic settings handlers
     async def get_setting(self, key, default=None):
         return self._settings.get_setting(key, default)
@@ -1040,6 +1043,93 @@ class Plugin:
             return self._settings.set_setting(key, value)
         except Exception as e:
             logger.error(f"Error setting {key}: {str(e)}")
+            logger.error(traceback.format_exc())
+            return False
+
+    # ゲーム別プロンプト機能
+    def _get_games_dir(self):
+        """ゲーム別プロンプトファイルの保存ディレクトリを返す"""
+        return os.path.join(settingsDir, "decky-translator-games")
+
+    def _extract_prompt_from_content(self, content: str) -> str:
+        """ファイル内容から1行目のメタ行を除去し、プロンプト部分のみ返す。
+        1行目が '--- ... ---' パターンの場合のみ除去。それ以外は全てプロンプト。"""
+        lines = content.split("\n")
+        if lines and lines[0].startswith("---") and lines[0].endswith("---"):
+            lines = lines[1:]
+        return "\n".join(lines).strip()
+
+    def _apply_game_prompt(self, game_prompt: str):
+        """ゲーム別プロンプトをLLMに適用する"""
+        self._current_game_prompt = game_prompt
+        if self._provider_manager:
+            self._provider_manager.configure_llm(system_prompt=game_prompt)
+
+    async def ensure_game_prompt_file(self, app_id: int, display_name: str):
+        """ゲーム別プロンプトファイルを確保し、内容を読み込んでプロンプトを適用する"""
+        try:
+            games_dir = self._get_games_dir()
+            os.makedirs(games_dir, exist_ok=True)
+            file_path = os.path.join(games_dir, f"{app_id}.txt")
+
+            if not os.path.exists(file_path):
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(f"--- {display_name} (App ID: {app_id}) ---\n")
+                logger.info(f"ゲーム別プロンプトファイルを作成: {file_path}")
+
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
+                content = f.read()
+
+            prompt = self._extract_prompt_from_content(content)
+            self._apply_game_prompt(prompt)
+
+            return {
+                "app_id": app_id,
+                "display_name": display_name,
+                "file_path": file_path,
+                "content": content,
+                "prompt": prompt,
+            }
+        except Exception as e:
+            logger.error(f"ゲーム別プロンプトファイルの処理に失敗: {e}")
+            logger.error(traceback.format_exc())
+            return {"app_id": app_id, "error": str(e)}
+
+    async def get_game_prompt(self, app_id: int):
+        """ゲーム別プロンプトファイルの内容を返す"""
+        try:
+            games_dir = self._get_games_dir()
+            file_path = os.path.join(games_dir, f"{app_id}.txt")
+            if not os.path.exists(file_path):
+                return {"exists": False, "app_id": app_id}
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
+                content = f.read()
+            prompt = self._extract_prompt_from_content(content)
+            return {
+                "exists": True,
+                "app_id": app_id,
+                "file_path": file_path,
+                "content": content,
+                "prompt": prompt,
+            }
+        except Exception as e:
+            logger.error(f"ゲーム別プロンプトの読み込みに失敗: {e}")
+            return {"exists": False, "app_id": app_id, "error": str(e)}
+
+    async def save_game_prompt(self, app_id: int, content: str):
+        """ゲーム別プロンプトファイルを保存し、プロンプトを再適用する"""
+        try:
+            games_dir = self._get_games_dir()
+            file_path = os.path.join(games_dir, f"{app_id}.txt")
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            logger.info(f"ゲーム別プロンプトを保存: app_id={app_id}")
+
+            prompt = self._extract_prompt_from_content(content)
+            self._apply_game_prompt(prompt)
+            return True
+        except Exception as e:
+            logger.error(f"ゲーム別プロンプトの保存に失敗: {e}")
             logger.error(traceback.format_exc())
             return False
 
