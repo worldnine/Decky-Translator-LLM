@@ -69,12 +69,14 @@ class LlmTranslateProvider(TranslationProvider):
         model: str = "",
         system_prompt: str = "",
         disable_thinking: bool = True,
+        parallel: bool = True,
     ):
         self._base_url = base_url.rstrip("/") if base_url else ""
         self._api_key = api_key
         self._model = model
         self._custom_prompt = system_prompt  # ユーザーのカスタム追加指示（空なら使わない）
         self._disable_thinking = disable_thinking
+        self._parallel = parallel
         logger.debug(
             f"LlmTranslateProvider initialized: base_url={self._base_url}, "
             f"model={self._model}, disable_thinking={self._disable_thinking}"
@@ -95,6 +97,7 @@ class LlmTranslateProvider(TranslationProvider):
         model: str = None,
         system_prompt: str = None,
         disable_thinking: bool = None,
+        parallel: bool = None,
     ) -> None:
         """設定を更新する。Noneでない値のみ更新（空文字列での明示的クリアに対応）。"""
         if base_url is not None:
@@ -107,6 +110,8 @@ class LlmTranslateProvider(TranslationProvider):
             self._custom_prompt = system_prompt
         if disable_thinking is not None:
             self._disable_thinking = disable_thinking
+        if parallel is not None:
+            self._parallel = parallel
 
     def _get_language_name(self, lang_code: str) -> str:
         """言語コードを自然言語名に変換する。"""
@@ -331,7 +336,11 @@ class LlmTranslateProvider(TranslationProvider):
     async def _translate_individually(
         self, texts: List[str], source_lang: str, target_lang: str
     ) -> List[str]:
-        """個別に翻訳する（フォールバック用）。"""
+        """個別に翻訳する（フォールバック用）。並列設定に応じて逐次/並列を切り替え。"""
+        if self._parallel:
+            return await self._translate_individually_parallel(
+                texts, source_lang, target_lang
+            )
         results = []
         for text in texts:
             try:
@@ -341,6 +350,19 @@ class LlmTranslateProvider(TranslationProvider):
                 logger.warning(f"Individual translation failed: {e}")
                 results.append(text)
         return results
+
+    async def _translate_individually_parallel(
+        self, texts: List[str], source_lang: str, target_lang: str
+    ) -> List[str]:
+        """個別翻訳を並列実行する。"""
+        async def _one(text: str) -> str:
+            try:
+                return await self.translate(text, source_lang, target_lang)
+            except Exception as e:
+                logger.warning(f"Individual translation failed: {e}")
+                return text
+
+        return list(await asyncio.gather(*[_one(t) for t in texts]))
 
     async def translate_with_image(
         self,

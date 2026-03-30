@@ -75,7 +75,7 @@ class ProviderManager:
         self._llm_image_rerecognition = False
         self._llm_image_confidence_threshold = 0.95
         self._llm_image_send_all = False
-        self._llm_image_parallel = False
+        self._llm_parallel = True
 
         logger.debug("ProviderManager initialized")
 
@@ -89,7 +89,7 @@ class ProviderManager:
         image_rerecognition: bool = None,
         image_confidence_threshold: float = None,
         image_send_all: bool = None,
-        image_parallel: bool = None,
+        parallel: bool = None,
     ) -> None:
         """LLM翻訳プロバイダーの設定を更新する。"""
         if base_url is not None:
@@ -108,8 +108,8 @@ class ProviderManager:
             self._llm_image_confidence_threshold = image_confidence_threshold
         if image_send_all is not None:
             self._llm_image_send_all = image_send_all
-        if image_parallel is not None:
-            self._llm_image_parallel = image_parallel
+        if parallel is not None:
+            self._llm_parallel = parallel
 
         # 既存のLLMプロバイダーインスタンスがあれば更新
         llm_provider = self._translation_providers.get(ProviderType.LLM)
@@ -118,6 +118,7 @@ class ProviderManager:
                 base_url=base_url, api_key=api_key,
                 model=model, system_prompt=system_prompt,
                 disable_thinking=disable_thinking,
+                parallel=parallel,
             )
         logger.debug(
             f"LLM config updated: base_url={self._llm_base_url}, "
@@ -291,6 +292,7 @@ class ProviderManager:
                     model=self._llm_model,
                     system_prompt=self._llm_system_prompt,
                     disable_thinking=self._llm_disable_thinking,
+                    parallel=self._llm_parallel,
                 )
 
         return self._translation_providers.get(provider_type)
@@ -405,8 +407,10 @@ class ProviderManager:
         # 結果配列を初期化
         results = list(texts)  # デフォルトは原文
 
-        # 高信頼度テキストはバッチ翻訳
-        if high_conf_indices:
+        # バッチ翻訳と画像翻訳を並列実行
+        async def _batch_task():
+            if not high_conf_indices:
+                return
             high_texts = [texts[i] for i in high_conf_indices]
             try:
                 high_translated = await provider.translate_batch(
@@ -417,9 +421,10 @@ class ProviderManager:
             except Exception as e:
                 logger.error(f"高信頼度テキストのバッチ翻訳エラー: {e}")
 
-        # 低信頼度テキストは画像付きで翻訳
-        if low_conf_indices:
-            if self._llm_image_parallel:
+        async def _image_task():
+            if not low_conf_indices:
+                return
+            if self._llm_parallel:
                 await self._translate_images_parallel(
                     provider, texts, text_regions, image_bytes,
                     low_conf_indices, results, source_lang, target_lang,
@@ -429,6 +434,8 @@ class ProviderManager:
                     provider, texts, text_regions, image_bytes,
                     low_conf_indices, results, source_lang, target_lang,
                 )
+
+        await asyncio.gather(_batch_task(), _image_task())
 
         return results
 

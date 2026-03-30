@@ -32,7 +32,7 @@ export interface Settings {
     llmImageRerecognition: boolean; // 低信頼度領域を画像で再認識
     llmImageConfidenceThreshold: number; // 画像再認識の信頼度閾値（0.0-1.0）
     llmImageSendAll: boolean; // 全領域を画像付きで送信
-    llmImageParallel: boolean; // 画像翻訳APIを並列呼び出し
+    llmParallel: boolean; // 画像翻訳APIを並列呼び出し
     debugMode: boolean; // Debug mode for verbose console logging
     fontScale: number; // Overlay font scale multiplier for external monitors
     groupingPower: number; // Text grouping aggressiveness (0.25 normal - 1.0 huge)
@@ -74,7 +74,7 @@ const initialSettings: Settings = {
     llmImageRerecognition: false, // デフォルトで画像再認識無効
     llmImageConfidenceThreshold: 0.95, // デフォルト閾値（RapidOCRは0.9+に集中するため高めに設定）
     llmImageSendAll: false, // デフォルトで全件送信無効
-    llmImageParallel: false, // デフォルトで並列呼び出し無効
+    llmParallel: true, // デフォルトで並列呼び出し有効（クラウドAPI向け）
     debugMode: false, // Debug mode off by default
     fontScale: 1.0,
     groupingPower: 0.25,
@@ -151,7 +151,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                     llmImageRerecognition: serverSettings.llm_image_rerecognition ?? false,
                     llmImageConfidenceThreshold: serverSettings.llm_image_confidence_threshold ?? 0.95,
                     llmImageSendAll: serverSettings.llm_image_send_all ?? false,
-                    llmImageParallel: serverSettings.llm_image_parallel ?? false,
+                    llmParallel: serverSettings.llm_parallel ?? false,
                     debugMode: serverSettings.debug_mode || false, // Debug mode
                     fontScale: serverSettings.font_scale ?? 1.0,
                     groupingPower: serverSettings.grouping_power ?? 0.25,
@@ -230,7 +230,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                 llmImageRerecognition: 'llm_image_rerecognition',
                 llmImageConfidenceThreshold: 'llm_image_confidence_threshold',
                 llmImageSendAll: 'llm_image_send_all',
-                llmImageParallel: 'llm_image_parallel',
+                llmParallel: 'llm_parallel',
                 debugMode: 'debug_mode',
                 fontScale: 'font_scale',
                 groupingPower: 'grouping_power',
