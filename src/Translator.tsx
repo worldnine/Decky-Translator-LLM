@@ -392,8 +392,8 @@ export class GameTranslatorLogic {
                         // Update processing step to translation
                         this.imageState.updateProcessingStep("Translating text");
 
-                        // Translate text
-                        let translatedRegions = await this.textTranslator.translateText(textRegions);
+                        // Translate text（画像再認識用にbase64画像データも渡す）
+                        let translatedRegions = await this.textTranslator.translateText(textRegions, result.base64);
                         logger.info('Translator', `Translation complete: ${translatedRegions.length} regions`);
 
                         if (this.hideIdenticalTranslations) {
