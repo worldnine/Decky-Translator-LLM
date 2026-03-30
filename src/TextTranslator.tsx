@@ -39,7 +39,7 @@ export class TextTranslator {
         return this.inputLanguage;
     }
 
-    async translateText(textRegions: TextRegion[]): Promise<TranslatedRegion[]> {
+    async translateText(textRegions: TextRegion[], imageData?: string): Promise<TranslatedRegion[]> {
         try {
             // Skip translation if there's nothing to translate
             if (!textRegions.length) {
@@ -47,11 +47,13 @@ export class TextTranslator {
             }
 
             // Call the Python backend method for translation, now including input language
+            // 画像再認識用にimage_dataも渡す（バックエンドで必要かどうかを判断）
             const response = await call<TranslatedRegion[] | ErrorResponse>(
                 'translate_text',
                 textRegions,
                 this.targetLanguage,
-                this.inputLanguage
+                this.inputLanguage,
+                imageData || null
             );
 
             if (response) {

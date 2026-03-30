@@ -1,7 +1,11 @@
 # providers/__init__.py
 # Provider factory and manager
 
+import base64
+import io
 import logging
+import os
+import subprocess
 from typing import List, Optional
 
 from .base import (
@@ -66,6 +70,10 @@ class ProviderManager:
         self._llm_system_prompt = ""
         self._llm_disable_thinking = True
 
+        # LLM画像再認識設定
+        self._llm_image_rerecognition = False
+        self._llm_image_confidence_threshold = 0.5
+
         logger.debug("ProviderManager initialized")
 
     def configure_llm(
@@ -75,6 +83,8 @@ class ProviderManager:
         model: str = None,
         system_prompt: str = None,
         disable_thinking: bool = None,
+        image_rerecognition: bool = None,
+        image_confidence_threshold: float = None,
     ) -> None:
         """LLM翻訳プロバイダーの設定を更新する。"""
         if base_url is not None:
@@ -87,6 +97,10 @@ class ProviderManager:
             self._llm_system_prompt = system_prompt
         if disable_thinking is not None:
             self._llm_disable_thinking = disable_thinking
+        if image_rerecognition is not None:
+            self._llm_image_rerecognition = image_rerecognition
+        if image_confidence_threshold is not None:
+            self._llm_image_confidence_threshold = image_confidence_threshold
 
         # 既存のLLMプロバイダーインスタンスがあれば更新
         llm_provider = self._translation_providers.get(ProviderType.LLM)
@@ -98,7 +112,9 @@ class ProviderManager:
             )
         logger.debug(
             f"LLM config updated: base_url={self._llm_base_url}, "
-            f"model={self._llm_model}, disable_thinking={self._llm_disable_thinking}"
+            f"model={self._llm_model}, disable_thinking={self._llm_disable_thinking}, "
+            f"image_rerecognition={self._llm_image_rerecognition}, "
+            f"image_confidence_threshold={self._llm_image_confidence_threshold}"
         )
 
     def configure(
@@ -298,15 +314,22 @@ class ProviderManager:
         self,
         texts: List[str],
         source_lang: str,
-        target_lang: str
+        target_lang: str,
+        text_regions: List[dict] = None,
+        image_bytes: bytes = None,
     ) -> List[str]:
         """
         Perform translation with automatic provider selection.
+
+        画像再認識が有効な場合、低信頼度のテキスト領域は切り出し画像付きで
+        LLMに送り、OCR再認識+翻訳を一括で行う。
 
         Args:
             texts: List of texts to translate
             source_lang: Source language code
             target_lang: Target language code
+            text_regions: OCR結果のTextRegion辞書リスト（画像再認識用、任意）
+            image_bytes: スクリーンショットのバイトデータ（画像再認識用、任意）
 
         Returns:
             List of translated texts
@@ -315,13 +338,189 @@ class ProviderManager:
             return []
 
         provider = self.get_translation_provider()
-        if provider and provider.is_available(source_lang, target_lang):
-            provider_name = provider.name
-            logger.debug(f"Using {provider_name} for translation")
-            return await provider.translate_batch(texts, source_lang, target_lang)
+        if not provider or not provider.is_available(source_lang, target_lang):
+            logger.warning("No translation provider available")
+            return texts
 
-        logger.warning("No translation provider available")
-        return texts  # Return original texts as fallback
+        provider_name = provider.name
+        logger.debug(f"Using {provider_name} for translation")
+
+        # 画像再認識が有効かつLLMプロバイダーの場合、低信頼度領域を画像付きで処理
+        if (
+            self._llm_image_rerecognition
+            and self._translation_provider_preference == "llm"
+            and text_regions is not None
+            and image_bytes is not None
+            and isinstance(provider, LlmTranslateProvider)
+        ):
+            return await self._translate_with_image_rerecognition(
+                provider, texts, text_regions, image_bytes,
+                source_lang, target_lang,
+            )
+
+        return await provider.translate_batch(texts, source_lang, target_lang)
+
+    async def _translate_with_image_rerecognition(
+        self,
+        provider: LlmTranslateProvider,
+        texts: List[str],
+        text_regions: List[dict],
+        image_bytes: bytes,
+        source_lang: str,
+        target_lang: str,
+    ) -> List[str]:
+        """低信頼度領域を画像付きでLLMに翻訳依頼し、高信頼度領域はテキストのみで処理する。"""
+        threshold = self._llm_image_confidence_threshold
+
+        # 高信頼度と低信頼度に分類
+        high_conf_indices = []
+        low_conf_indices = []
+        for i, region in enumerate(text_regions):
+            if i >= len(texts):
+                break
+            confidence = region.get("confidence", 1.0)
+            if confidence < threshold:
+                low_conf_indices.append(i)
+            else:
+                high_conf_indices.append(i)
+
+        logger.info(
+            f"画像再認識: {len(low_conf_indices)}/{len(texts)} regions below "
+            f"threshold {threshold} (indices: {low_conf_indices})"
+        )
+
+        # 結果配列を初期化
+        results = list(texts)  # デフォルトは原文
+
+        # 高信頼度テキストはバッチ翻訳
+        if high_conf_indices:
+            high_texts = [texts[i] for i in high_conf_indices]
+            try:
+                high_translated = await provider.translate_batch(
+                    high_texts, source_lang, target_lang
+                )
+                for j, idx in enumerate(high_conf_indices):
+                    results[idx] = high_translated[j]
+            except Exception as e:
+                logger.error(f"高信頼度テキストのバッチ翻訳エラー: {e}")
+
+        # 低信頼度テキストは画像付きで個別翻訳
+        if low_conf_indices:
+            for idx in low_conf_indices:
+                region = text_regions[idx]
+                try:
+                    crop_b64 = self._crop_region_base64(image_bytes, region["rect"])
+                    if crop_b64:
+                        translated = await provider.translate_with_image(
+                            ocr_text=texts[idx],
+                            image_base64=crop_b64,
+                            confidence=region.get("confidence", 0.0),
+                            source_lang=source_lang,
+                            target_lang=target_lang,
+                        )
+                        results[idx] = translated
+                    else:
+                        # 切り出し失敗時はテキストのみで翻訳
+                        results[idx] = await provider.translate(
+                            texts[idx], source_lang, target_lang
+                        )
+                except Exception as e:
+                    logger.warning(f"画像再認識翻訳エラー (index {idx}): {e}")
+                    try:
+                        results[idx] = await provider.translate(
+                            texts[idx], source_lang, target_lang
+                        )
+                    except Exception:
+                        pass  # 原文のまま
+
+        return results
+
+    @staticmethod
+    def _crop_region_base64(image_bytes: bytes, rect: dict) -> Optional[str]:
+        """画像バイトデータからrect領域を切り出してBase64文字列を返す。
+
+        Decky LoaderのPython 3.11ランタイムではPILを直接使えないため、
+        システムPythonのサブプロセスで画像処理を行う。
+        """
+        left = rect.get("left", 0)
+        top = rect.get("top", 0)
+        right = rect.get("right", 0)
+        bottom = rect.get("bottom", 0)
+
+        if right <= left or bottom <= top:
+            logger.warning(f"無効なrect: {rect}")
+            return None
+
+        try:
+            python_path = ""
+            for path in ['/usr/bin/python3', '/usr/bin/python3.13', '/usr/local/bin/python3']:
+                if os.path.exists(path) and os.access(path, os.X_OK):
+                    python_path = path
+                    break
+            if not python_path:
+                logger.error("システムPythonが見つかりません")
+                return None
+
+            script = """
+import sys, io, base64
+from PIL import Image
+
+data = sys.stdin.buffer.read()
+left, top, right, bottom = map(int, sys.argv[1:5])
+
+img = Image.open(io.BytesIO(data))
+# 画像サイズでクランプ
+w, h = img.size
+left = max(0, min(left, w))
+top = max(0, min(top, h))
+right = max(left + 1, min(right, w))
+bottom = max(top + 1, min(bottom, h))
+
+cropped = img.crop((left, top, right, bottom))
+out = io.BytesIO()
+cropped.save(out, format='PNG')
+sys.stdout.write(base64.b64encode(out.getvalue()).decode())
+"""
+            env = os.environ.copy()
+            plugin_dir = os.environ.get("DECKY_PLUGIN_DIR", "")
+            if plugin_dir:
+                bin_pm = os.path.join(plugin_dir, "bin", "py_modules")
+                root_pm = os.path.join(plugin_dir, "py_modules")
+                paths = [p for p in [bin_pm, root_pm] if os.path.exists(p)]
+                if paths:
+                    env['PYTHONPATH'] = os.pathsep.join(paths)
+            env['PYTHONNOUSERSITE'] = '1'
+
+            result = subprocess.run(
+                [python_path, '-S', '-c', script,
+                 str(left), str(top), str(right), str(bottom)],
+                input=image_bytes,
+                capture_output=True,
+                timeout=10,
+                env=env,
+            )
+
+            if result.returncode != 0:
+                logger.error(f"画像切り出しサブプロセスエラー: {result.stderr.decode()[:500]}")
+                return None
+
+            b64 = result.stdout.decode().strip()
+            if not b64:
+                logger.error("画像切り出し結果が空です")
+                return None
+
+            logger.debug(
+                f"画像切り出し完了: rect=({left},{top},{right},{bottom}), "
+                f"base64 length={len(b64)}"
+            )
+            return b64
+
+        except subprocess.TimeoutExpired:
+            logger.error("画像切り出しがタイムアウトしました")
+            return None
+        except Exception as e:
+            logger.error(f"画像切り出しエラー: {e}")
+            return None
 
     def get_provider_status(self) -> dict:
         """

@@ -29,6 +29,8 @@ export interface Settings {
     llmModel: string; // LLMモデル名
     llmSystemPrompt: string; // LLMシステムプロンプト
     llmDisableThinking: boolean; // LLM thinkingモード無効化
+    llmImageRerecognition: boolean; // 低信頼度領域を画像で再認識
+    llmImageConfidenceThreshold: number; // 画像再認識の信頼度閾値（0.0-1.0）
     debugMode: boolean; // Debug mode for verbose console logging
     fontScale: number; // Overlay font scale multiplier for external monitors
     groupingPower: number; // Text grouping aggressiveness (0.25 normal - 1.0 huge)
@@ -67,6 +69,8 @@ const initialSettings: Settings = {
     llmModel: "", // LLMモデル名
     llmSystemPrompt: "", // カスタムシステムプロンプト
     llmDisableThinking: true, // デフォルトでthinkingモードを無効化
+    llmImageRerecognition: false, // デフォルトで画像再認識無効
+    llmImageConfidenceThreshold: 0.5, // デフォルト閾値
     debugMode: false, // Debug mode off by default
     fontScale: 1.0,
     groupingPower: 0.25,
@@ -140,6 +144,8 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                     llmModel: serverSettings.llm_model || "",
                     llmSystemPrompt: serverSettings.llm_system_prompt || "",
                     llmDisableThinking: serverSettings.llm_disable_thinking ?? true,
+                    llmImageRerecognition: serverSettings.llm_image_rerecognition ?? false,
+                    llmImageConfidenceThreshold: serverSettings.llm_image_confidence_threshold ?? 0.5,
                     debugMode: serverSettings.debug_mode || false, // Debug mode
                     fontScale: serverSettings.font_scale ?? 1.0,
                     groupingPower: serverSettings.grouping_power ?? 0.25,
@@ -215,6 +221,8 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                 llmModel: 'llm_model',
                 llmSystemPrompt: 'llm_system_prompt',
                 llmDisableThinking: 'llm_disable_thinking',
+                llmImageRerecognition: 'llm_image_rerecognition',
+                llmImageConfidenceThreshold: 'llm_image_confidence_threshold',
                 debugMode: 'debug_mode',
                 fontScale: 'font_scale',
                 groupingPower: 'grouping_power',

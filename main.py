@@ -886,6 +886,8 @@ class Plugin:
     _llm_model: str = ""
     _llm_system_prompt: str = ""
     _llm_disable_thinking: bool = True
+    _llm_image_rerecognition: bool = False
+    _llm_image_confidence_threshold: float = 0.5
 
     # Generic settings handlers
     async def get_setting(self, key, default=None):
@@ -1014,6 +1016,14 @@ class Plugin:
                 self._llm_disable_thinking = value
                 if self._provider_manager:
                     self._provider_manager.configure_llm(disable_thinking=value)
+            elif key == "llm_image_rerecognition":
+                self._llm_image_rerecognition = value
+                if self._provider_manager:
+                    self._provider_manager.configure_llm(image_rerecognition=value)
+            elif key == "llm_image_confidence_threshold":
+                self._llm_image_confidence_threshold = value
+                if self._provider_manager:
+                    self._provider_manager.configure_llm(image_confidence_threshold=value)
             else:
                 logger.warning(f"Unknown setting key: {key}")
 
@@ -1055,6 +1065,8 @@ class Plugin:
                 "llm_model": self._llm_model,
                 "llm_system_prompt": self._llm_system_prompt,
                 "llm_disable_thinking": self._llm_disable_thinking,
+                "llm_image_rerecognition": self._llm_image_rerecognition,
+                "llm_image_confidence_threshold": self._llm_image_confidence_threshold,
             }
             return settings
         except Exception as e:
@@ -1465,7 +1477,7 @@ class Plugin:
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to delete temporary screenshot: {cleanup_error}")
 
-    async def translate_text(self, text_regions, target_language=None, input_language=None):
+    async def translate_text(self, text_regions, target_language=None, input_language=None, image_data=None):
         try:
             if not text_regions:
                 return []
@@ -1479,11 +1491,24 @@ class Plugin:
 
             texts_to_translate = [region["text"] for region in text_regions]
 
+            # 画像再認識用にimage_bytesを準備
+            image_bytes = None
+            if image_data and self._llm_image_rerecognition:
+                try:
+                    img_str = image_data
+                    if img_str.startswith('data:image'):
+                        img_str = img_str.split(',', 1)[1]
+                    image_bytes = base64.b64decode(img_str)
+                except Exception as e:
+                    logger.warning(f"画像再認識用のimage_bytesデコードエラー: {e}")
+
             start_time = time.time()
             translated_texts = await self._provider_manager.translate_text(
                 texts_to_translate,
                 source_lang=input_lang,
-                target_lang=target_lang
+                target_lang=target_lang,
+                text_regions=text_regions,
+                image_bytes=image_bytes,
             )
             logger.info(f"Translation completed in {time.time() - start_time:.2f}s, {len(texts_to_translate)} regions")
 
@@ -1696,6 +1721,8 @@ class Plugin:
             self._llm_model = self._settings.get_setting("llm_model", "")
             self._llm_system_prompt = self._settings.get_setting("llm_system_prompt", "")
             self._llm_disable_thinking = self._settings.get_setting("llm_disable_thinking", True)
+            self._llm_image_rerecognition = self._settings.get_setting("llm_image_rerecognition", False)
+            self._llm_image_confidence_threshold = self._settings.get_setting("llm_image_confidence_threshold", 0.5)
 
             # Initialize provider manager
             self._provider_manager = ProviderManager()
@@ -1714,6 +1741,8 @@ class Plugin:
                     model=self._llm_model,
                     system_prompt=self._llm_system_prompt,
                     disable_thinking=self._llm_disable_thinking,
+                    image_rerecognition=self._llm_image_rerecognition,
+                    image_confidence_threshold=self._llm_image_confidence_threshold,
                 )
 
             # Load and apply RapidOCR-specific settings

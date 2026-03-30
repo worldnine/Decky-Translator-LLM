@@ -480,6 +480,33 @@ export const TabTranslation: VFC = () => {
                                 description="Suppress thinking process in DeepSeek-R1, Qwen3, etc. to improve speed and reduce cost"
                             />
                         </PanelSectionRow>
+                        <PanelSectionRow>
+                            <ToggleField
+                                label="Image-Assisted Translation"
+                                checked={settings.llmImageRerecognition}
+                                onChange={(value) => updateSetting('llmImageRerecognition', value, 'LLM Image Rerecognition')}
+                                description={
+                                    settings.ocrProvider === 'ocrspace'
+                                        ? "Not available with OCR.space (no per-line confidence scores)"
+                                        : "Send cropped images of low-confidence OCR regions to LLM for better recognition. Uses Vision API — may increase latency and cost."
+                                }
+                                disabled={settings.ocrProvider === 'ocrspace'}
+                            />
+                        </PanelSectionRow>
+                        {settings.llmImageRerecognition && settings.ocrProvider !== 'ocrspace' && (
+                            <PanelSectionRow>
+                                <SliderField
+                                    label="Confidence Threshold"
+                                    value={settings.llmImageConfidenceThreshold}
+                                    min={0.1}
+                                    max={0.9}
+                                    step={0.1}
+                                    showValue={true}
+                                    onChange={(value) => updateSetting('llmImageConfidenceThreshold', value, 'LLM Image Confidence Threshold')}
+                                    description="Regions below this OCR confidence will be sent as images to the LLM"
+                                />
+                            </PanelSectionRow>
+                        )}
                     </>
                 )}
 

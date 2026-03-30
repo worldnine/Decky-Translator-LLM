@@ -3,14 +3,15 @@
 # Gemini Flash, GPT-4o-mini, DeepSeek, Ollama等に対応
 
 import asyncio
+import base64
 import json
 import logging
 import re
-from typing import List
+from typing import Dict, List, Optional
 
 import requests
 
-from .base import TranslationProvider, ProviderType, NetworkError, ApiKeyError
+from .base import TranslationProvider, ProviderType, TextRegion, NetworkError, ApiKeyError
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +136,7 @@ class LlmTranslateProvider(TranslationProvider):
         if not self._base_url or not self._model:
             raise ApiKeyError("LLM base_url and model must be configured")
 
-        url = f"{self._base_url}/v1/chat/completions"
+        url = f"{self._base_url}/chat/completions"
         headers = {
             "Content-Type": "application/json",
         }
@@ -340,3 +341,80 @@ class LlmTranslateProvider(TranslationProvider):
                 logger.warning(f"Individual translation failed: {e}")
                 results.append(text)
         return results
+
+    async def translate_with_image(
+        self,
+        ocr_text: str,
+        image_base64: str,
+        confidence: float,
+        source_lang: str,
+        target_lang: str,
+    ) -> str:
+        """画像付きでLLMに翻訳を依頼する。
+
+        OCR信頼度が低いテキスト領域の切り出し画像を送り、
+        LLMにOCR再認識+翻訳を一括で行わせる。
+        OpenAI API互換のVision機能（content配列にimage_url型）を使用。
+
+        Args:
+            ocr_text: OCRが認識したテキスト（参考情報）
+            image_base64: 切り出し画像のBase64文字列（PNG/JPEG）
+            confidence: OCRの信頼度スコア（0.0-1.0）
+            source_lang: ソース言語コード
+            target_lang: ターゲット言語コード
+
+        Returns:
+            翻訳済みテキスト
+        """
+        tgt_name = self._get_language_name(target_lang)
+        if source_lang == "auto":
+            src_name = "the detected language"
+        else:
+            src_name = self._get_language_name(source_lang)
+
+        confidence_pct = int(confidence * 100)
+
+        system_prompt = (
+            "You are a game text translator with OCR capability. "
+            "You will receive a cropped image from a game screen along with "
+            "an OCR engine's attempt at reading it. "
+            "The OCR result may be inaccurate. "
+            "Read the text directly from the image, then translate it "
+            f"from {src_name} to {tgt_name}. "
+            "Keep game-specific abbreviations (HP, MP, EXP, ATK, DEF, etc.), "
+            "numbers, and proper nouns unchanged unless you know the standard "
+            f"localized form in {tgt_name}. "
+            "Return ONLY the translation. No explanations, notes, or extra text."
+        )
+        if self._custom_prompt:
+            system_prompt += f"\n\nAdditional instructions: {self._custom_prompt}"
+
+        # image_base64がdata URIでない場合は付与
+        if not image_base64.startswith("data:"):
+            image_base64 = f"data:image/png;base64,{image_base64}"
+
+        user_content = [
+            {
+                "type": "image_url",
+                "image_url": {"url": image_base64},
+            },
+            {
+                "type": "text",
+                "text": (
+                    f"OCR result (confidence: {confidence_pct}%): \"{ocr_text}\"\n"
+                    "Please read the text from the image and translate it."
+                ),
+            },
+        ]
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+
+        logger.debug(
+            f"LLM image translate: confidence={confidence_pct}%, "
+            f"ocr_text='{ocr_text}', {source_lang} -> {target_lang}"
+        )
+        result = await asyncio.to_thread(self._call_api, messages)
+        return result
