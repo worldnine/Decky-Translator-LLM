@@ -890,6 +890,8 @@ class Plugin:
     _llm_image_confidence_threshold: float = 0.95
     _llm_image_send_all: bool = False
     _llm_parallel: bool = True
+    _llm_vision_translation: bool = False
+    _llm_coordinate_mode: str = "pixel"
 
     # Generic settings handlers
     async def get_setting(self, key, default=None):
@@ -1034,6 +1036,10 @@ class Plugin:
                 self._llm_parallel = value
                 if self._provider_manager:
                     self._provider_manager.configure_llm(parallel=value)
+            elif key == "llm_vision_translation":
+                self._llm_vision_translation = value
+                if self._provider_manager:
+                    self._provider_manager.configure_llm(vision_translation=value)
             else:
                 logger.warning(f"Unknown setting key: {key}")
 
@@ -1079,6 +1085,7 @@ class Plugin:
                 "llm_image_confidence_threshold": self._llm_image_confidence_threshold,
                 "llm_image_send_all": self._llm_image_send_all,
                 "llm_parallel": self._llm_parallel,
+                "llm_vision_translation": self._llm_vision_translation,
             }
             return settings
         except Exception as e:
@@ -1545,6 +1552,110 @@ class Plugin:
             logger.error(traceback.format_exc())
             return None
 
+    async def preflight_vision_check(self):
+        """Vision Translationの事前検証RPC。set_settingとは独立。"""
+        try:
+            if not self._provider_manager:
+                return {"ok": False, "message": "Provider manager not initialized"}
+            result = self._provider_manager.preflight_vision_check()
+            if result.get("ok"):
+                # coordinate_modeを永続化
+                coord_mode = self._provider_manager._llm_coordinate_mode
+                self._llm_coordinate_mode = coord_mode
+                self._settings.set_setting("llm_coordinate_mode", coord_mode)
+                logger.info(f"coordinate_mode saved: {coord_mode}")
+            return result
+        except Exception as e:
+            logger.error(f"Vision preflight error: {e}")
+            logger.error(traceback.format_exc())
+            return {"ok": False, "message": str(e)}
+
+    async def vision_translate(self, image_data, target_language=None, input_language=None):
+        """Vision Translation: スクリーンショットから直接テキスト検出+翻訳。OCRバイパス。"""
+        try:
+            if not image_data:
+                return {"error": "vision_failed", "message": "No image data"}
+
+            target_lang = target_language or self._target_language
+            input_lang = input_language or self._input_language
+
+            if not self._provider_manager:
+                return {"error": "vision_failed", "message": "Provider manager not initialized"}
+
+            # Base64デコード
+            img_str = image_data
+            if img_str.startswith('data:image'):
+                img_str = img_str.split(',', 1)[1]
+            image_bytes = base64.b64decode(img_str)
+
+            # 画像サイズ取得（システムPythonサブプロセス）
+            image_width, image_height = await self._get_image_size(image_bytes)
+            if not image_width or not image_height:
+                return {"error": "vision_failed", "message": "Failed to get image dimensions"}
+
+            start_time = time.time()
+            result = await self._provider_manager.recognize_and_translate(
+                image_bytes, input_lang, target_lang,
+                image_width, image_height,
+            )
+            elapsed = time.time() - start_time
+
+            if result is None:
+                logger.warning(f"Vision Translation失敗 ({elapsed:.2f}s)")
+                return {"error": "vision_failed", "message": "Vision translation returned no results"}
+
+            logger.info(f"Vision Translation完了: {len(result)} regions in {elapsed:.2f}s")
+            return result
+
+        except NetworkError as e:
+            logger.error(f"Network error during vision translation: {e}")
+            return {"error": "network_error", "message": str(e)}
+        except ApiKeyError as e:
+            logger.error(f"API key error during vision translation: {e}")
+            return {"error": "api_key_error", "message": "Invalid API key"}
+        except Exception as e:
+            logger.error(f"Vision translation error: {e}")
+            logger.error(traceback.format_exc())
+            return {"error": "vision_failed", "message": str(e)}
+
+    async def _get_image_size(self, image_bytes: bytes) -> tuple:
+        """画像バイトデータからサイズ(width, height)を取得する。
+        PILが使えないDecky環境のため、PNGヘッダから直接読み取る。"""
+        try:
+            import struct
+            # PNGシグネチャ確認
+            if image_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+                # IHDRチャンクからwidth, height取得（オフセット16-24）
+                width = struct.unpack('>I', image_bytes[16:20])[0]
+                height = struct.unpack('>I', image_bytes[20:24])[0]
+                logger.debug(f"Image size from PNG header: {width}x{height}")
+                return width, height
+
+            # PNG以外の場合はサブプロセスでPIL使用
+            import subprocess
+            python_path = ""
+            for path in ['/usr/bin/python3', '/usr/bin/python3.13', '/usr/local/bin/python3']:
+                import os
+                if os.path.exists(path) and os.access(path, os.X_OK):
+                    python_path = path
+                    break
+            if not python_path:
+                logger.error("システムPythonが見つかりません")
+                return (None, None)
+
+            script = "import sys,io;from PIL import Image;d=sys.stdin.buffer.read();i=Image.open(io.BytesIO(d));print(f'{i.size[0]} {i.size[1]}')"
+            result = subprocess.run(
+                [python_path, '-S', '-c', script],
+                input=image_bytes, capture_output=True, timeout=5,
+            )
+            if result.returncode == 0:
+                parts = result.stdout.decode().strip().split()
+                return int(parts[0]), int(parts[1])
+            return (None, None)
+        except Exception as e:
+            logger.error(f"画像サイズ取得エラー: {e}")
+            return (None, None)
+
     async def get_enabled_state(self):
         return await self.get_setting("enabled", True)
 
@@ -1737,6 +1848,8 @@ class Plugin:
             self._llm_image_confidence_threshold = self._settings.get_setting("llm_image_confidence_threshold", 0.95)
             self._llm_image_send_all = self._settings.get_setting("llm_image_send_all", False)
             self._llm_parallel = self._settings.get_setting("llm_parallel", True)
+            self._llm_vision_translation = self._settings.get_setting("llm_vision_translation", False)
+            self._llm_coordinate_mode = self._settings.get_setting("llm_coordinate_mode", "pixel")
 
             # Initialize provider manager
             self._provider_manager = ProviderManager()
@@ -1759,6 +1872,8 @@ class Plugin:
                     image_confidence_threshold=self._llm_image_confidence_threshold,
                     image_send_all=self._llm_image_send_all,
                     parallel=self._llm_parallel,
+                    vision_translation=self._llm_vision_translation,
+                    coordinate_mode=self._llm_coordinate_mode,
                 )
 
             # Load and apply RapidOCR-specific settings

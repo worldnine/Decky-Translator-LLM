@@ -77,6 +77,10 @@ class ProviderManager:
         self._llm_image_send_all = False
         self._llm_parallel = True
 
+        # Vision Translation設定（OCRバイパス）
+        self._llm_vision_translation = False
+        self._llm_coordinate_mode = "pixel"  # "pixel" or "normalized"
+
         logger.debug("ProviderManager initialized")
 
     def configure_llm(
@@ -90,6 +94,8 @@ class ProviderManager:
         image_confidence_threshold: float = None,
         image_send_all: bool = None,
         parallel: bool = None,
+        vision_translation: bool = None,
+        coordinate_mode: str = None,
     ) -> None:
         """LLM翻訳プロバイダーの設定を更新する。"""
         if base_url is not None:
@@ -110,6 +116,10 @@ class ProviderManager:
             self._llm_image_send_all = image_send_all
         if parallel is not None:
             self._llm_parallel = parallel
+        if vision_translation is not None:
+            self._llm_vision_translation = vision_translation
+        if coordinate_mode is not None:
+            self._llm_coordinate_mode = coordinate_mode
 
         # 既存のLLMプロバイダーインスタンスがあれば更新
         llm_provider = self._translation_providers.get(ProviderType.LLM)
@@ -124,7 +134,9 @@ class ProviderManager:
             f"LLM config updated: base_url={self._llm_base_url}, "
             f"model={self._llm_model}, disable_thinking={self._llm_disable_thinking}, "
             f"image_rerecognition={self._llm_image_rerecognition}, "
-            f"image_confidence_threshold={self._llm_image_confidence_threshold}"
+            f"image_confidence_threshold={self._llm_image_confidence_threshold}, "
+            f"vision_translation={self._llm_vision_translation}, "
+            f"coordinate_mode={self._llm_coordinate_mode}"
         )
 
     def configure(
@@ -618,6 +630,188 @@ sys.stdout.write(base64.b64encode(out.getvalue()).decode())
         except Exception as e:
             logger.error(f"画像切り出しエラー: {e}")
             return None
+
+    def _to_original_pixel_coordinates(
+        self, rect: dict,
+        original_w: int, original_h: int,
+        compressed_w: int, compressed_h: int,
+    ) -> dict:
+        """LLM返却座標 → 元画像のピクセル座標に変換する。2段変換:
+        1. normalized(0-1000) → 圧縮画像ピクセル（coordinate_mode=="normalized"の場合）
+        2. 圧縮画像ピクセル → 元画像ピクセル（圧縮していた場合）
+        """
+        l, t = float(rect["left"]), float(rect["top"])
+        r, b = float(rect["right"]), float(rect["bottom"])
+
+        # Stage 1: normalized → compressed pixel
+        if self._llm_coordinate_mode == "normalized":
+            l = l * compressed_w / 1000
+            t = t * compressed_h / 1000
+            r = r * compressed_w / 1000
+            b = b * compressed_h / 1000
+
+        # Stage 2: compressed pixel → original pixel
+        if compressed_w != original_w or compressed_h != original_h:
+            scale_x = original_w / compressed_w
+            scale_y = original_h / compressed_h
+            l, r = l * scale_x, r * scale_x
+            t, b = t * scale_y, b * scale_y
+
+        return {
+            "left":   max(0, min(int(l), original_w)),
+            "top":    max(0, min(int(t), original_h)),
+            "right":  max(0, min(int(r), original_w)),
+            "bottom": max(0, min(int(b), original_h)),
+        }
+
+    @staticmethod
+    def _resize_and_compress_image(
+        image_bytes: bytes, max_long_side: int = 1024, quality: int = 80,
+    ) -> Optional[tuple]:
+        """画像をリサイズ・JPEG圧縮して (base64_str, width, height) を返す。
+        システムPythonサブプロセスでPIL使用。"""
+        try:
+            python_path = ""
+            for path in ['/usr/bin/python3', '/usr/bin/python3.13', '/usr/local/bin/python3']:
+                if os.path.exists(path) and os.access(path, os.X_OK):
+                    python_path = path
+                    break
+            if not python_path:
+                logger.error("システムPythonが見つかりません")
+                return None
+
+            script = f"""
+import sys, io, base64, json
+from PIL import Image
+
+data = sys.stdin.buffer.read()
+img = Image.open(io.BytesIO(data))
+w, h = img.size
+max_side = {max_long_side}
+if max(w, h) > max_side:
+    ratio = max_side / max(w, h)
+    w, h = int(w * ratio), int(h * ratio)
+    img = img.resize((w, h), Image.LANCZOS)
+img = img.convert('RGB')
+out = io.BytesIO()
+img.save(out, format='JPEG', quality={quality})
+b64 = base64.b64encode(out.getvalue()).decode()
+json.dump({{"b64": b64, "w": w, "h": h}}, sys.stdout)
+"""
+            env = os.environ.copy()
+            plugin_dir = os.environ.get("DECKY_PLUGIN_DIR", "")
+            if plugin_dir:
+                bin_pm = os.path.join(plugin_dir, "bin", "py_modules")
+                root_pm = os.path.join(plugin_dir, "py_modules")
+                paths = [p for p in [bin_pm, root_pm] if os.path.exists(p)]
+                if paths:
+                    env['PYTHONPATH'] = os.pathsep.join(paths)
+            env['PYTHONNOUSERSITE'] = '1'
+
+            import json as json_mod
+            result = subprocess.run(
+                [python_path, '-S', '-c', script],
+                input=image_bytes,
+                capture_output=True,
+                timeout=10,
+                env=env,
+            )
+            if result.returncode != 0:
+                logger.error(f"画像圧縮サブプロセスエラー: {result.stderr.decode()[:500]}")
+                return None
+
+            data = json_mod.loads(result.stdout.decode())
+            logger.debug(
+                f"画像圧縮完了: {data['w']}x{data['h']}, "
+                f"base64 length={len(data['b64'])}"
+            )
+            return (data["b64"], data["w"], data["h"])
+
+        except subprocess.TimeoutExpired:
+            logger.error("画像圧縮がタイムアウトしました")
+            return None
+        except Exception as e:
+            logger.error(f"画像圧縮エラー: {e}")
+            return None
+
+    def preflight_vision_check(self) -> dict:
+        """LLMのVision + JSON構造化出力対応を検証する。
+
+        Returns:
+            {"ok": bool, "message": str}
+            成功時はcoordinate_modeを内部に保持する。
+        """
+        provider = self.get_translation_provider(ProviderType.LLM)
+        if not provider or not isinstance(provider, LlmTranslateProvider):
+            return {"ok": False, "message": "LLMプロバイダーが設定されていません"}
+
+        success, message, coordinate_mode = provider.preflight_vision_check()
+        if success:
+            self._llm_coordinate_mode = coordinate_mode or "pixel"
+            logger.info(f"Vision preflight成功: coordinate_mode={self._llm_coordinate_mode}")
+        return {"ok": success, "message": message}
+
+    async def recognize_and_translate(
+        self,
+        image_bytes: bytes,
+        source_lang: str,
+        target_lang: str,
+        image_width: int,
+        image_height: int,
+    ) -> Optional[List[dict]]:
+        """Vision Translation: スクリーンショットから直接テキスト検出+翻訳。
+
+        画像を圧縮してLLMに送信、返却座標を元解像度に再スケーリングする。
+
+        Returns:
+            成功: TranslatedRegion互換の辞書リスト
+            失敗: None
+        """
+        provider = self.get_translation_provider(ProviderType.LLM)
+        if not provider or not isinstance(provider, LlmTranslateProvider):
+            logger.warning("Vision Translation: LLMプロバイダーが利用不可")
+            return None
+
+        # 画像圧縮（速度改善の核心）
+        compressed = self._resize_and_compress_image(image_bytes)
+        if compressed:
+            image_b64, comp_w, comp_h = compressed
+            logger.info(
+                f"Vision: 画像圧縮 {image_width}x{image_height} -> {comp_w}x{comp_h}"
+            )
+        else:
+            # 圧縮失敗時はそのまま送信
+            image_b64 = base64.b64encode(image_bytes).decode()
+            comp_w, comp_h = image_width, image_height
+            logger.warning("Vision: 画像圧縮失敗、元画像を使用")
+
+        try:
+            raw_regions = await provider.recognize_and_translate(
+                image_b64, source_lang, target_lang,
+                comp_w, comp_h,  # プロンプトには圧縮後のサイズを渡す
+            )
+        except Exception as e:
+            logger.error(f"Vision Translation失敗: {e}")
+            return None
+
+        # 座標変換（2段: normalized/pixel → compressed → original）+ TranslatedRegion互換形式
+        result = []
+        for r in raw_regions:
+            pixel_rect = self._to_original_pixel_coordinates(
+                r["rect"],
+                image_width, image_height,
+                comp_w, comp_h,
+            )
+            result.append({
+                "text": r["text"],
+                "translatedText": r["translated_text"],
+                "rect": pixel_rect,
+                "confidence": 1.0,
+                "isDialog": False,
+            })
+
+        logger.info(f"Vision Translation完了: {len(result)} regions")
+        return result
 
     def get_provider_status(self) -> dict:
         """

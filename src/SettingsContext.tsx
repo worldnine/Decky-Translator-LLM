@@ -33,6 +33,7 @@ export interface Settings {
     llmImageConfidenceThreshold: number; // 画像再認識の信頼度閾値（0.0-1.0）
     llmImageSendAll: boolean; // 全領域を画像付きで送信
     llmParallel: boolean; // 画像翻訳APIを並列呼び出し
+    llmVisionTranslation: boolean; // Vision Translation (OCRバイパス)
     debugMode: boolean; // Debug mode for verbose console logging
     fontScale: number; // Overlay font scale multiplier for external monitors
     groupingPower: number; // Text grouping aggressiveness (0.25 normal - 1.0 huge)
@@ -75,6 +76,7 @@ const initialSettings: Settings = {
     llmImageConfidenceThreshold: 0.95, // デフォルト閾値（RapidOCRは0.9+に集中するため高めに設定）
     llmImageSendAll: false, // デフォルトで全件送信無効
     llmParallel: true, // デフォルトで並列呼び出し有効（クラウドAPI向け）
+    llmVisionTranslation: false, // デフォルトでVision Translation無効
     debugMode: false, // Debug mode off by default
     fontScale: 1.0,
     groupingPower: 0.25,
@@ -152,6 +154,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                     llmImageConfidenceThreshold: serverSettings.llm_image_confidence_threshold ?? 0.95,
                     llmImageSendAll: serverSettings.llm_image_send_all ?? false,
                     llmParallel: serverSettings.llm_parallel ?? false,
+                    llmVisionTranslation: serverSettings.llm_vision_translation ?? false,
                     debugMode: serverSettings.debug_mode || false, // Debug mode
                     fontScale: serverSettings.font_scale ?? 1.0,
                     groupingPower: serverSettings.grouping_power ?? 0.25,
@@ -184,6 +187,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                 logic.setGroupingPower(serverSettings.grouping_power ?? 0.25);
                 logic.setHideIdenticalTranslations(serverSettings.hide_identical_translations ?? false);
                 logic.setAllowLabelGrowth(serverSettings.allow_label_growth ?? false);
+                logic.setVisionTranslationEnabled(serverSettings.llm_vision_translation ?? false);
 
                 logger.info('SettingsContext', 'All settings loaded successfully');
                 logger.logObject('SettingsContext', 'Settings', mappedSettings);
@@ -231,6 +235,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                 llmImageConfidenceThreshold: 'llm_image_confidence_threshold',
                 llmImageSendAll: 'llm_image_send_all',
                 llmParallel: 'llm_parallel',
+                llmVisionTranslation: 'llm_vision_translation',
                 debugMode: 'debug_mode',
                 fontScale: 'font_scale',
                 groupingPower: 'grouping_power',
@@ -296,6 +301,9 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                     break;
                 case 'googleApiKey':
                     logic.setHasGoogleApiKey(!!value);
+                    break;
+                case 'llmVisionTranslation':
+                    logic.setVisionTranslationEnabled(value);
                     break;
             }
 

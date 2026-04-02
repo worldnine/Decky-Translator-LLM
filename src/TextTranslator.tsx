@@ -39,6 +39,40 @@ export class TextTranslator {
         return this.inputLanguage;
     }
 
+    async visionTranslate(imageData: string): Promise<TranslatedRegion[] | null> {
+        try {
+            const response = await call<TranslatedRegion[] | ErrorResponse | null>(
+                'vision_translate',
+                imageData,
+                this.targetLanguage,
+                this.inputLanguage,
+            );
+
+            if (!response) return null;
+
+            if (isErrorResponse(response)) {
+                const errorResponse = response as ErrorResponse;
+                if (errorResponse.error === 'network_error') {
+                    throw new NetworkError(errorResponse.message);
+                }
+                if (errorResponse.error === 'api_key_error') {
+                    throw new ApiKeyError(errorResponse.message);
+                }
+                // vision_failed等 → nullでフォールバック
+                logger.warn('TextTranslator', `Vision translate error: ${errorResponse.error} - ${errorResponse.message}`);
+                return null;
+            }
+
+            return response as TranslatedRegion[];
+        } catch (error) {
+            if (error instanceof NetworkError || error instanceof ApiKeyError) {
+                throw error;
+            }
+            logger.warn('TextTranslator', 'Vision translate failed', error);
+            return null;
+        }
+    }
+
     async translateText(textRegions: TextRegion[], imageData?: string): Promise<TranslatedRegion[]> {
         try {
             // Skip translation if there's nothing to translate

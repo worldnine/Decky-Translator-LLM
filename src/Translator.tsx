@@ -26,6 +26,7 @@ export class GameTranslatorLogic {
     private confidenceThreshold: number = 0.6; // Default confidence threshold
     private pauseGameOnOverlay: boolean = false;
     private hideIdenticalTranslations: boolean = false;
+    private visionTranslationEnabled: boolean = false;
 
     // Provider settings for upfront validation
     private ocrProvider: string = "rapidocr";
@@ -193,6 +194,10 @@ export class GameTranslatorLogic {
 
     setHideIdenticalTranslations = (enabled: boolean): void => {
         this.hideIdenticalTranslations = enabled;
+    }
+
+    setVisionTranslationEnabled = (enabled: boolean): void => {
+        this.visionTranslationEnabled = enabled;
     }
 
     setPauseGameOnOverlay = (enabled: boolean): void => {
@@ -374,7 +379,30 @@ export class GameTranslatorLogic {
                     // Immediately show the new screenshot on the overlay
                     this.imageState.showImage(result.base64);
 
-                    // Then start the OCR process
+                    // Vision Translation: OCRバイパスでLLMに直接画像送信
+                    if (this.visionTranslationEnabled) {
+                        this.imageState.updateProcessingStep("Translating (Vision)");
+                        const visionResult = await this.textTranslator.visionTranslate(result.base64);
+                        if (visionResult && visionResult.length > 0) {
+                            logger.info('Translator', `Vision translation complete: ${visionResult.length} regions`);
+                            let translatedRegions = visionResult;
+                            if (this.hideIdenticalTranslations) {
+                                const before = translatedRegions.length;
+                                translatedRegions = translatedRegions.filter(r =>
+                                    r.translatedText.trim().toLowerCase() !== r.text.trim().toLowerCase()
+                                );
+                                if (translatedRegions.length < before) {
+                                    logger.info('Translator', `Filtered ${before - translatedRegions.length} identical translations`);
+                                }
+                            }
+                            this.imageState.showTranslatedImage(result.base64, translatedRegions);
+                            return;
+                        }
+                        // Vision失敗 → 従来のOCRフローにフォールバック
+                        logger.warn('Translator', 'Vision translation returned no results, falling back to OCR');
+                    }
+
+                    // OCRフロー
                     this.imageState.updateProcessingStep("Recognizing text");
 
                     // Check if we have a valid path

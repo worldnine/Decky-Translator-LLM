@@ -136,7 +136,11 @@ class LlmTranslateProvider(TranslationProvider):
             return f"{base}\n\nAdditional instructions: {self._custom_prompt}"
         return base
 
-    def _call_api(self, messages: list, temperature: float = 0.1) -> str:
+    def _call_api(
+        self, messages: list, temperature: float = 0.1,
+        response_format: dict = None,
+        max_tokens: int = None,
+    ) -> str:
         """OpenAI API互換エンドポイントを呼び出す。"""
         if not self._base_url or not self._model:
             raise ApiKeyError("LLM base_url and model must be configured")
@@ -153,6 +157,11 @@ class LlmTranslateProvider(TranslationProvider):
             "messages": messages,
             "temperature": temperature,
         }
+
+        if response_format:
+            payload["response_format"] = response_format
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
 
         # thinkingモード無効化: 各プラットフォーム向けのパラメータを送信
         # 非対応サーバーは未知のパラメータを無視するため、全て同時に送信して安全
@@ -440,3 +449,238 @@ class LlmTranslateProvider(TranslationProvider):
         )
         result = await asyncio.to_thread(self._call_api, messages)
         return result
+
+    # --- Vision Translation: OCRバイパス、画像から直接テキスト検出+翻訳 ---
+
+    @staticmethod
+    def _extract_json(text: str) -> dict:
+        """LLMレスポンスからJSONオブジェクトを抽出する。
+        マークダウンコードブロックやゴミテキストに対応。"""
+        # thinkingタグ除去
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+        text = re.sub(r"<reasoning>.*?</reasoning>", "", text, flags=re.DOTALL)
+        # マークダウンコードブロック除去
+        text = re.sub(r'```json\s*', '', text)
+        text = re.sub(r'```\s*', '', text)
+        text = text.strip()
+        # まず直接パースを試す
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        # 最初の { から最後の } までを抽出して再パース
+        start = text.find('{')
+        end = text.rfind('}')
+        if start >= 0 and end > start:
+            return json.loads(text[start:end + 1])
+        raise json.JSONDecodeError("No JSON object found", text, 0)
+
+    @staticmethod
+    def _generate_test_png_base64() -> str:
+        """preflight用の最小テスト画像（1x1白PNG）をBase64で生成する。
+        PIL不要。PNG仕様に基づきzlibで手組み。"""
+        import struct
+        import zlib
+
+        def _chunk(chunk_type: bytes, data: bytes) -> bytes:
+            c = chunk_type + data
+            return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
+
+        # 1x1 白ピクセル、RGB
+        width, height = 1, 1
+        ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)  # 8bit RGB
+        raw_row = b"\x00\xff\xff\xff"  # filter=None, R=255, G=255, B=255
+        idat = zlib.compress(raw_row)
+
+        png = b"\x89PNG\r\n\x1a\n"
+        png += _chunk(b"IHDR", ihdr)
+        png += _chunk(b"IDAT", idat)
+        png += _chunk(b"IEND", b"")
+        return base64.b64encode(png).decode()
+
+    def preflight_vision_check(self) -> tuple:
+        """Vision + JSON構造化出力の対応を検証する。同期メソッド。
+
+        Returns:
+            (success: bool, error_message: str, coordinate_mode: str or None)
+            coordinate_modeは "pixel" または "normalized"。失敗時はNone。
+        """
+        if not self._base_url or not self._model:
+            return (False, "LLM base_url and model must be configured", None)
+
+        test_image_b64 = self._generate_test_png_base64()
+        data_uri = f"data:image/png;base64,{test_image_b64}"
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are an image analyzer. Return valid JSON only. "
+                    "Analyze the image and return any text you find."
+                ),
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": data_uri}},
+                    {
+                        "type": "text",
+                        "text": (
+                            'Return JSON: {"regions": [{"text": "detected text", '
+                            '"rect": {"left": 0, "top": 0, "right": 1, "bottom": 1}}]}. '
+                            "If no text found, return {\"regions\": []}."
+                        ),
+                    },
+                ],
+            },
+        ]
+
+        try:
+            result = self._call_api(
+                messages, temperature=0.0,
+                response_format={"type": "json_object"},
+            )
+            parsed = json.loads(result)
+
+            # JSON構造化出力+Visionが動作することを確認できた
+            # 座標形式の判定: regionsにrectがあれば座標値から推定
+            coordinate_mode = "pixel"  # デフォルト
+            regions = parsed.get("regions", [])
+            if regions and isinstance(regions, list):
+                for r in regions:
+                    rect = r.get("rect")
+                    if rect and isinstance(rect, dict):
+                        max_coord = max(
+                            rect.get("right", 0), rect.get("bottom", 0)
+                        )
+                        # テスト画像は1x1なので、座標が大きければ正規化座標
+                        if max_coord > 10:
+                            coordinate_mode = "normalized"
+                        break
+
+            logger.info(
+                f"Vision preflight成功: coordinate_mode={coordinate_mode}"
+            )
+            return (True, "", coordinate_mode)
+
+        except json.JSONDecodeError as e:
+            msg = f"モデルがJSON構造化出力に対応していません: {e}"
+            logger.warning(f"Vision preflight失敗: {msg}")
+            return (False, msg, None)
+        except ApiKeyError as e:
+            return (False, str(e), None)
+        except NetworkError as e:
+            return (False, str(e), None)
+        except Exception as e:
+            msg = f"Vision preflight失敗: {e}"
+            logger.warning(msg)
+            return (False, msg, None)
+
+    async def recognize_and_translate(
+        self,
+        image_base64: str,
+        source_lang: str,
+        target_lang: str,
+        image_width: int,
+        image_height: int,
+    ) -> List[dict]:
+        """スクリーンショットから直接テキスト検出+翻訳を行う（OCRバイパス）。
+
+        Vision APIでフルスクリーンショットを送り、テキスト領域の座標と翻訳を
+        JSON構造化出力で1回のAPIコールで取得する。
+
+        Args:
+            image_base64: フルスクリーンショットのBase64文字列
+            source_lang: ソース言語コード
+            target_lang: ターゲット言語コード
+            image_width: 画像の幅（ピクセル）
+            image_height: 画像の高さ（ピクセル）
+
+        Returns:
+            領域リスト: [{"text": str, "translated_text": str, "rect": {...}}]
+
+        Raises:
+            Exception: JSONパース失敗、API呼び出し失敗等
+        """
+        tgt_name = self._get_language_name(target_lang)
+        if source_lang == "auto":
+            src_name = "the detected language"
+        else:
+            src_name = self._get_language_name(source_lang)
+
+        system_prompt = (
+            "You are a game screen text detector and translator. "
+            "You will receive a game screenshot. "
+            f"Find all text, translate from {src_name} to {tgt_name}. "
+            "Keep abbreviations (HP, MP, EXP, etc.) and proper nouns unchanged. "
+            "Return JSON only."
+        )
+        if self._custom_prompt:
+            system_prompt += f"\n\n{self._custom_prompt}"
+
+        if not image_base64.startswith("data:"):
+            image_base64 = f"data:image/jpeg;base64,{image_base64}"
+
+        user_content = [
+            {"type": "image_url", "image_url": {"url": image_base64}},
+            {
+                "type": "text",
+                "text": (
+                    f"Image size: {image_width}x{image_height}px. "
+                    "Return JSON:\n"
+                    '{"regions":[{"text":"original","translated_text":"翻訳",'
+                    '"rect":{"left":0,"top":0,"right":100,"bottom":50}}]}\n'
+                    "Use pixel coordinates."
+                ),
+            },
+        ]
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+
+        logger.info(
+            f"Vision recognize_and_translate: {image_width}x{image_height}, "
+            f"{source_lang} -> {target_lang}"
+        )
+
+        result = await asyncio.to_thread(
+            self._call_api, messages,
+            response_format={"type": "json_object"},
+            max_tokens=4096,
+        )
+        logger.info(f"Vision output: {result[:500]!r}")
+
+        parsed = self._extract_json(result)
+        regions = parsed.get("regions", [])
+
+        if not isinstance(regions, list):
+            raise ValueError(f"Invalid response: 'regions' is not a list: {type(regions)}")
+
+        # 有効な領域のみフィルタ
+        valid_regions = []
+        for r in regions:
+            if not isinstance(r, dict):
+                continue
+            text = r.get("text", "")
+            translated = r.get("translated_text", "")
+            rect = r.get("rect")
+            if not text or not rect or not isinstance(rect, dict):
+                continue
+            # 必須フィールドの存在チェック
+            if not all(k in rect for k in ("left", "top", "right", "bottom")):
+                continue
+            valid_regions.append({
+                "text": str(text),
+                "translated_text": str(translated or text),
+                "rect": {
+                    "left": int(rect["left"]),
+                    "top": int(rect["top"]),
+                    "right": int(rect["right"]),
+                    "bottom": int(rect["bottom"]),
+                },
+            })
+
+        logger.info(f"Vision: {len(valid_regions)}/{len(regions)} valid regions")
+        return valid_regions

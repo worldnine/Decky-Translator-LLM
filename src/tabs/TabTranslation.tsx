@@ -1,5 +1,6 @@
 // src/tabs/TabTranslation.tsx - Language and provider settings
 
+import { call } from "@decky/api";
 import {
     PanelSection,
     PanelSectionRow,
@@ -490,18 +491,46 @@ export const TabTranslation: VFC = () => {
                         </PanelSectionRow>
                         <PanelSectionRow>
                             <ToggleField
-                                label="Image-Assisted Translation"
-                                checked={settings.llmImageRerecognition}
-                                onChange={(value) => updateSetting('llmImageRerecognition', value, 'LLM Image Rerecognition')}
-                                description={
-                                    settings.ocrProvider === 'ocrspace'
-                                        ? "Not available with OCR.space (no per-line confidence scores)"
-                                        : "Send cropped images of low-confidence OCR regions to LLM for better recognition. Uses Vision API — may increase latency and cost."
-                                }
-                                disabled={settings.ocrProvider === 'ocrspace'}
+                                label="Vision Translation (OCR Bypass)"
+                                checked={settings.llmVisionTranslation}
+                                onChange={async (value) => {
+                                    if (value) {
+                                        // preflight検証を実行
+                                        const result = await call<{ok: boolean, message: string}>('preflight_vision_check');
+                                        if (!result?.ok) {
+                                            // 失敗 → エラー通知、トグルは変更しない
+                                            // TODO: logic.notify が使えないのでconsoleに出力
+                                            console.error('Vision preflight failed:', result?.message);
+                                            return;
+                                        }
+                                    }
+                                    updateSetting('llmVisionTranslation', value, 'Vision Translation');
+                                    // Vision TranslationとImage-Assistedは排他
+                                    if (value && settings.llmImageRerecognition) {
+                                        updateSetting('llmImageRerecognition', false, 'LLM Image Rerecognition');
+                                    }
+                                }}
+                                description="Send screenshot directly to LLM for text detection and translation in one call. Skips OCR entirely. Requires Vision-capable model with JSON output (Gemini, GPT-4o, etc)."
                             />
                         </PanelSectionRow>
-                        {settings.llmImageRerecognition && settings.ocrProvider !== 'ocrspace' && (
+                        {!settings.llmVisionTranslation && (
+                            <>
+                                <PanelSectionRow>
+                                    <ToggleField
+                                        label="Image-Assisted Translation"
+                                        checked={settings.llmImageRerecognition}
+                                        onChange={(value) => updateSetting('llmImageRerecognition', value, 'LLM Image Rerecognition')}
+                                        description={
+                                            settings.ocrProvider === 'ocrspace'
+                                                ? "Not available with OCR.space (no per-line confidence scores)"
+                                                : "Send cropped images of low-confidence OCR regions to LLM for better recognition. Uses Vision API — may increase latency and cost."
+                                        }
+                                        disabled={settings.ocrProvider === 'ocrspace'}
+                                    />
+                                </PanelSectionRow>
+                            </>
+                        )}
+                        {settings.llmImageRerecognition && !settings.llmVisionTranslation && settings.ocrProvider !== 'ocrspace' && (
                             <>
                                 <PanelSectionRow>
                                     <ToggleField
