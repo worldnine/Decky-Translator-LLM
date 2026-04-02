@@ -389,9 +389,9 @@ export class GameTranslatorLogic {
                     // Immediately show the new screenshot on the overlay
                     this.imageState.showImage(result.base64);
 
-                    // Vision Translation: OCRバイパスでLLMに直接画像送信
-                    // LLMプロバイダーが選択されている場合のみ（他プロバイダーへの誤送信防止）
-                    if (this.visionMode === 'direct') {
+                    // Vision Translation: OCRバイパスでVision Providerに直接画像送信
+                    // 現在VisionはLLM設定をフォールバックするため、LLMプロバイダー選択時のみ実行
+                    if (this.visionMode === 'direct' && this.translationProvider === 'llm') {
                         this.imageState.updateProcessingStep("Translating (Vision)");
                         const visionResult = await this.textTranslator.visionTranslate(result.base64);
                         if (visionResult && visionResult.length > 0) {

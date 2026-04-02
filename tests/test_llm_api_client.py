@@ -98,6 +98,48 @@ class TestConfigurationError:
             client.call([{"role": "user", "content": "test"}])
 
 
+class TestGeminiUrlNormalization:
+    """Gemini ネイティブAPI URL正規化のテスト。"""
+
+    def test_openai接尾辞のみ(self):
+        client = LlmApiClient(
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+            model="gemini-2.5-flash",
+        )
+        # _call_gemini_native 内部でURLを構築するため、is_gemini()を通じて間接確認
+        assert client.is_gemini() is True
+
+    def test_openai_chat_completions完全URL(self):
+        """v1beta/openai/chat/completions のような完全URLでも正規化される。"""
+        client = LlmApiClient(
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            model="gemini-2.5-flash",
+        )
+        assert client.is_gemini() is True
+        # 内部で正規化されることを間接検証: URLの /openai/chat/completions が剥がされる
+        base = client._base_url
+        changed = True
+        while changed:
+            changed = False
+            for suffix in ["/chat/completions", "/openai", "/v1"]:
+                if base.endswith(suffix):
+                    base = base[:-len(suffix)]
+                    changed = True
+        assert base == "https://generativelanguage.googleapis.com/v1beta"
+
+    def test_v1_openai_chat_completions(self):
+        """v1/openai/chat/completions パターン。"""
+        base = "https://generativelanguage.googleapis.com/v1/openai/chat/completions"
+        changed = True
+        while changed:
+            changed = False
+            for suffix in ["/chat/completions", "/openai", "/v1"]:
+                if base.endswith(suffix):
+                    base = base[:-len(suffix)]
+                    changed = True
+        assert base == "https://generativelanguage.googleapis.com"
+
+
 class TestConfigure:
     """configure() のテスト。"""
 

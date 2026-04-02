@@ -1597,9 +1597,9 @@ class Plugin:
 
             texts_to_translate = [region["text"] for region in text_regions]
 
-            # 画像再認識用にimage_bytesを準備
+            # Vision assist用にimage_bytesを準備
             image_bytes = None
-            if image_data and self._llm_image_rerecognition:
+            if image_data and self._vision_mode == "assist":
                 try:
                     img_str = image_data
                     if img_str.startswith('data:image'):

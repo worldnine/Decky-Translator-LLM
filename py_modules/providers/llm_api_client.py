@@ -109,9 +109,14 @@ class LlmApiClient:
     ) -> str:
         """Gemini ネイティブAPIを呼び出す。thinkingConfig対応。"""
         base = self._base_url
-        for suffix in ["/openai", "/chat/completions", "/v1"]:
-            if base.endswith(suffix):
-                base = base[:-len(suffix)]
+        # 複数の接尾辞を繰り返し剥がす（例: /v1beta/openai/chat/completions → /v1beta）
+        changed = True
+        while changed:
+            changed = False
+            for suffix in ["/chat/completions", "/openai", "/v1"]:
+                if base.endswith(suffix):
+                    base = base[:-len(suffix)]
+                    changed = True
         url = f"{base}/models/{self._model}:generateContent"
 
         headers = {"Content-Type": "application/json"}

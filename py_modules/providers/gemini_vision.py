@@ -340,13 +340,42 @@ class GeminiVisionProvider(VisionProvider):
             },
         ]
 
+        # direct_translate() と同じ形式で検証する
+        # json_object だけ通っても json_schema が非対応なら本番で失敗する
+        preflight_schema = {
+            "type": "object",
+            "properties": {
+                "regions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string"},
+                            "rect": {
+                                "type": "object",
+                                "properties": {
+                                    "left": {"type": "integer"},
+                                    "top": {"type": "integer"},
+                                    "right": {"type": "integer"},
+                                    "bottom": {"type": "integer"},
+                                },
+                                "required": ["left", "top", "right", "bottom"],
+                            },
+                        },
+                        "required": ["text", "rect"],
+                    },
+                },
+            },
+            "required": ["regions"],
+        }
+
         try:
             result = self._client.call(
                 messages, temperature=0.0,
-                response_format={"type": "json_object"},
+                response_format={"type": "json_object", "schema": preflight_schema},
             )
             self._extract_json(result)
-            logger.info("Vision preflight成功: Vision + JSON対応確認")
+            logger.info("Vision preflight成功: Vision + JSON Schema対応確認")
             return (True, "")
 
         except json.JSONDecodeError as e:
