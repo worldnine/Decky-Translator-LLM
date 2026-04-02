@@ -74,7 +74,8 @@ class LlmTranslateProvider(TranslationProvider):
         self._base_url = base_url.rstrip("/") if base_url else ""
         self._api_key = api_key
         self._model = model
-        self._custom_prompt = system_prompt  # ユーザーのカスタム追加指示（空なら使わない）
+        self._custom_prompt = system_prompt  # ユーザーのグローバル追加指示（空なら使わない）
+        self._game_prompt = ""  # ゲーム別プロンプト（空なら使わない）
         self._disable_thinking = disable_thinking
         self._parallel = parallel
         logger.debug(
@@ -96,6 +97,7 @@ class LlmTranslateProvider(TranslationProvider):
         api_key: str = None,
         model: str = None,
         system_prompt: str = None,
+        game_prompt: str = None,
         disable_thinking: bool = None,
         parallel: bool = None,
     ) -> None:
@@ -108,6 +110,8 @@ class LlmTranslateProvider(TranslationProvider):
             self._model = model
         if system_prompt is not None:
             self._custom_prompt = system_prompt
+        if game_prompt is not None:
+            self._game_prompt = game_prompt
         if disable_thinking is not None:
             self._disable_thinking = disable_thinking
         if parallel is not None:
@@ -121,8 +125,8 @@ class LlmTranslateProvider(TranslationProvider):
         """翻訳用のシステムプロンプトを構築する。
 
         ベースプロンプト（言語指定含む）は常に使用し、
-        ユーザーのカスタムプロンプトがあれば追加指示として末尾に付加する。
-        source_langが"auto"の場合は言語自動検出を明示的に指示する。
+        グローバルカスタムプロンプトとゲーム別プロンプトがあれば追加指示として付加する。
+        両方が設定されている場合は両方を合成する（上書きではない）。
         """
         tgt_name = self._get_language_name(target_lang)
         if source_lang == "auto":
@@ -132,19 +136,171 @@ class LlmTranslateProvider(TranslationProvider):
         base = BASE_SYSTEM_PROMPT.format(
             source_lang=src_name, target_lang=tgt_name
         )
+        # グローバル + ゲーム別プロンプトを合成
+        additional = []
         if self._custom_prompt:
-            return f"{base}\n\nAdditional instructions: {self._custom_prompt}"
+            additional.append(self._custom_prompt)
+        if self._game_prompt:
+            additional.append(self._game_prompt)
+        if additional:
+            return f"{base}\n\nAdditional instructions: {chr(10).join(additional)}"
         return base
+
+    def _is_gemini(self) -> bool:
+        """GeminiネイティブAPIを使うべきか判定する。
+        モデル名がgemini-で始まり、かつbase_urlがGoogleのネイティブAPIの場合のみ。
+        OpenRouter/LiteLLM等のプロキシ経由の場合はOpenAI互換APIを使う。"""
+        return (
+            self._model.strip().lower().startswith("gemini-")
+            and "generativelanguage.googleapis.com" in self._base_url
+        )
 
     def _call_api(
         self, messages: list, temperature: float = 0.1,
         response_format: dict = None,
         max_tokens: int = None,
+        timeout: float = 30.0,
     ) -> str:
-        """OpenAI API互換エンドポイントを呼び出す。"""
+        """LLM APIを呼び出す。Geminiの場合はネイティブAPIを使用。"""
         if not self._base_url or not self._model:
             raise ApiKeyError("LLM base_url and model must be configured")
 
+        # Gemini ネイティブAPI: thinkingConfig対応
+        if self._is_gemini():
+            return self._call_gemini_native(
+                messages, temperature, response_format, max_tokens, timeout,
+            )
+
+        return self._call_openai_compatible(
+            messages, temperature, response_format, max_tokens, timeout,
+        )
+
+    def _call_gemini_native(
+        self, messages: list, temperature: float,
+        response_format: dict, max_tokens: int, timeout: float,
+    ) -> str:
+        """Gemini ネイティブAPIを呼び出す。thinkingConfig対応。"""
+        # base_urlからネイティブAPIエンドポイントを構築
+        # 例: https://generativelanguage.googleapis.com/v1beta/openai
+        #   → https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+        base = self._base_url
+        # /openai や /chat/completions を除去してベースを取得
+        for suffix in ["/openai", "/chat/completions", "/v1"]:
+            if base.endswith(suffix):
+                base = base[:-len(suffix)]
+        url = f"{base}/models/{self._model}:generateContent"
+
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["x-goog-api-key"] = self._api_key
+
+        # OpenAI messages → Gemini contents 変換
+        system_text = ""
+        contents = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+
+            if role == "system":
+                if isinstance(content, str):
+                    system_text = content
+                continue
+
+            # user/assistant → Gemini parts
+            gemini_role = "user" if role == "user" else "model"
+            parts = []
+            if isinstance(content, str):
+                parts.append({"text": content})
+            elif isinstance(content, list):
+                for item in content:
+                    if item.get("type") == "text":
+                        parts.append({"text": item["text"]})
+                    elif item.get("type") == "image_url":
+                        img_url = item["image_url"]["url"]
+                        if img_url.startswith("data:"):
+                            # data:image/png;base64,xxx → inlineData
+                            mime_end = img_url.index(";")
+                            mime_type = img_url[5:mime_end]
+                            b64_data = img_url.split(",", 1)[1]
+                            parts.append({
+                                "inlineData": {
+                                    "mimeType": mime_type,
+                                    "data": b64_data,
+                                }
+                            })
+
+            if parts:
+                contents.append({"role": gemini_role, "parts": parts})
+
+        payload = {
+            "contents": contents,
+            "generationConfig": {
+                "temperature": temperature,
+            },
+        }
+
+        if system_text:
+            payload["systemInstruction"] = {"parts": [{"text": system_text}]}
+
+        if max_tokens:
+            payload["generationConfig"]["maxOutputTokens"] = max_tokens
+
+        if response_format and response_format.get("type") == "json_object":
+            payload["generationConfig"]["responseMimeType"] = "application/json"
+            # responseSchemaが指定されていればJSON構造を厳密に強制
+            schema = response_format.get("schema")
+            if schema:
+                payload["generationConfig"]["responseSchema"] = schema
+
+        # thinkingモード無効化
+        if self._disable_thinking:
+            payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
+
+        try:
+            response = requests.post(
+                url, headers=headers, json=payload, timeout=timeout,
+            )
+
+            if response.status_code == 401 or response.status_code == 403:
+                raise ApiKeyError("Invalid API key")
+            if response.status_code == 429:
+                from .base import RateLimitError
+                raise RateLimitError("Rate limit exceeded")
+            if response.status_code != 200:
+                logger.warning(
+                    f"Gemini API error: {response.status_code} - {response.text[:300]}"
+                )
+                raise NetworkError(f"Gemini API returned status {response.status_code}")
+
+            result = response.json()
+            candidate = result["candidates"][0]
+            finish_reason = candidate.get("finishReason", "unknown")
+            content = candidate["content"]["parts"][0]["text"]
+
+            if finish_reason not in ("STOP", "stop"):
+                logger.warning(
+                    f"Gemini finish_reason={finish_reason} "
+                    f"(content length={len(content)})"
+                )
+
+            content = self._strip_thinking_tags(content)
+            return content.strip()
+
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Gemini connection error: {e}")
+            raise NetworkError("Geminiサーバーに接続できません") from e
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Gemini timeout: {e}")
+            raise NetworkError("Geminiサーバーがタイムアウトしました") from e
+        except (KeyError, IndexError, json.JSONDecodeError) as e:
+            logger.error(f"Gemini response parse error: {e}")
+            raise NetworkError("Geminiのレスポンスを解析できません") from e
+
+    def _call_openai_compatible(
+        self, messages: list, temperature: float,
+        response_format: dict, max_tokens: int, timeout: float,
+    ) -> str:
+        """OpenAI API互換エンドポイントを呼び出す。"""
         url = f"{self._base_url}/chat/completions"
         headers = {
             "Content-Type": "application/json",
@@ -159,23 +315,34 @@ class LlmTranslateProvider(TranslationProvider):
         }
 
         if response_format:
-            payload["response_format"] = response_format
+            # OpenAI互換APIに渡す形式に変換（内部のschemaキーを除去）
+            fmt = {k: v for k, v in response_format.items() if k != "schema"}
+            # schemaがある場合はjson_schema形式に変換（GPT-4o等が対応）
+            schema = response_format.get("schema")
+            if schema:
+                fmt = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "vision_translation",
+                        "schema": schema,
+                    },
+                }
+            payload["response_format"] = fmt
         if max_tokens:
             payload["max_tokens"] = max_tokens
 
-        # thinkingモード無効化: 各プラットフォーム向けのパラメータを送信
-        # 非対応サーバーは未知のパラメータを無視するため、全て同時に送信して安全
-        if self._disable_thinking:
-            # Ollama: chat APIのトップレベルパラメータ
+        # thinkingモード無効化: Ollama/DashScope/vLLM等の緩いサーバーのみに送信
+        is_lenient_server = any(h in self._base_url for h in [
+            "localhost", "127.0.0.1", "dashscope.", "ollama",
+        ])
+        if self._disable_thinking and is_lenient_server:
             payload["think"] = False
-            # DashScope (Alibaba Cloud / Qwen3.5-Plus等): enable_thinking
             payload["enable_thinking"] = False
-            # vLLM: chat_template_kwargs経由
             payload["chat_template_kwargs"] = {"enable_thinking": False}
 
         try:
             response = requests.post(
-                url, headers=headers, json=payload, timeout=30.0
+                url, headers=headers, json=payload, timeout=timeout,
             )
 
             if response.status_code == 401:
@@ -190,9 +357,14 @@ class LlmTranslateProvider(TranslationProvider):
                 raise NetworkError(f"LLM API returned status {response.status_code}")
 
             result = response.json()
-            content = result["choices"][0]["message"]["content"]
-            # thinkingモード対応: <think>...</think> タグを除去
-            # DeepSeek-R1, Qwen3等がインラインで思考内容を含む場合がある
+            choice = result["choices"][0]
+            finish_reason = choice.get("finish_reason", "unknown")
+            content = choice["message"]["content"]
+            if finish_reason != "stop":
+                logger.warning(
+                    f"LLM finish_reason={finish_reason} "
+                    f"(content length={len(content)})"
+                )
             content = self._strip_thinking_tags(content)
             return content.strip()
 
@@ -417,8 +589,14 @@ class LlmTranslateProvider(TranslationProvider):
             f"localized form in {tgt_name}. "
             "Return ONLY the translation. No explanations, notes, or extra text."
         )
+        # グローバル + ゲーム別プロンプトを合成
+        additional = []
         if self._custom_prompt:
-            system_prompt += f"\n\nAdditional instructions: {self._custom_prompt}"
+            additional.append(self._custom_prompt)
+        if self._game_prompt:
+            additional.append(self._game_prompt)
+        if additional:
+            system_prompt += f"\n\nAdditional instructions: {chr(10).join(additional)}"
 
         # image_base64がdata URIでない場合は付与
         if not image_base64.startswith("data:"):
@@ -453,8 +631,8 @@ class LlmTranslateProvider(TranslationProvider):
     # --- Vision Translation: OCRバイパス、画像から直接テキスト検出+翻訳 ---
 
     @staticmethod
-    def _extract_json(text: str) -> dict:
-        """LLMレスポンスからJSONオブジェクトを抽出する。
+    def _extract_json(text: str):
+        """LLMレスポンスからJSONオブジェクトまたは配列を抽出する。
         マークダウンコードブロックやゴミテキストに対応。"""
         # thinkingタグ除去
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
@@ -466,14 +644,70 @@ class LlmTranslateProvider(TranslationProvider):
         # まず直接パースを試す
         try:
             return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-        # 最初の { から最後の } までを抽出して再パース
-        start = text.find('{')
-        end = text.rfind('}')
-        if start >= 0 and end > start:
-            return json.loads(text[start:end + 1])
+        except json.JSONDecodeError as e:
+            logger.debug(f"_extract_json: 直接パース失敗: {e}")
+        # 最初の { または [ から対応する閉じ括弧までを抽出して再パース
+        for open_ch, close_ch in [('{', '}'), ('[', ']')]:
+            start = text.find(open_ch)
+            end = text.rfind(close_ch)
+            if start >= 0 and end > start:
+                try:
+                    return json.loads(text[start:end + 1])
+                except json.JSONDecodeError as e:
+                    logger.debug(
+                        f"_extract_json: {open_ch}..{close_ch} パース失敗: {e}, "
+                        f"range={start}..{end+1}/{len(text)}"
+                    )
+                    continue
         raise json.JSONDecodeError("No JSON object found", text, 0)
+
+    @staticmethod
+    def _recover_truncated_json(text: str):
+        """途切れたJSONから有効なregionを部分回復する。
+
+        finish_reason=lengthでJSONが途中で切れた場合、最後の完全なオブジェクトまでを
+        抽出してパースする。回復不能ならNoneを返す。
+        """
+        # thinkingタグ・コードブロック除去
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+        text = re.sub(r'```json\s*', '', text)
+        text = re.sub(r'```\s*', '', text)
+        text = text.strip()
+
+        # "regions" 配列の中身を探して、最後の完全な },{ 区切りまでを使う
+        # 配列直返しの場合は先頭の [ から
+        for attempt in range(3):
+            # 最後の完全な "}," or "}" を探してそこで切る
+            last_complete = text.rfind('},')
+            last_single = text.rfind('}')
+            if last_complete > 0:
+                truncated = text[:last_complete + 1]  # }, の } まで
+            elif last_single > 0:
+                truncated = text[:last_single + 1]
+            else:
+                return None
+
+            # 開き括弧を補完
+            open_braces = truncated.count('{') - truncated.count('}')
+            open_brackets = truncated.count('[') - truncated.count(']')
+            truncated += '}' * max(0, open_braces)
+            truncated += ']' * max(0, open_brackets)
+
+            try:
+                parsed = json.loads(truncated)
+                region_count = 0
+                if isinstance(parsed, list):
+                    region_count = len(parsed)
+                elif isinstance(parsed, dict):
+                    region_count = len(parsed.get("regions", []))
+                logger.info(f"Vision 部分回復成功: {region_count} regions recovered")
+                return parsed
+            except json.JSONDecodeError:
+                # さらに手前で切って再試行
+                text = text[:last_complete] if last_complete > 0 else text[:last_single]
+                continue
+
+        return None
 
     @staticmethod
     def _generate_test_png_base64() -> str:
@@ -502,11 +736,10 @@ class LlmTranslateProvider(TranslationProvider):
         """Vision + JSON構造化出力の対応を検証する。同期メソッド。
 
         Returns:
-            (success: bool, error_message: str, coordinate_mode: str or None)
-            coordinate_modeは "pixel" または "normalized"。失敗時はNone。
+            (success: bool, error_message: str)
         """
         if not self._base_url or not self._model:
-            return (False, "LLM base_url and model must be configured", None)
+            return (False, "LLM base_url and model must be configured")
 
         test_image_b64 = self._generate_test_png_base64()
         data_uri = f"data:image/png;base64,{test_image_b64}"
@@ -540,41 +773,23 @@ class LlmTranslateProvider(TranslationProvider):
                 messages, temperature=0.0,
                 response_format={"type": "json_object"},
             )
-            parsed = json.loads(result)
-
-            # JSON構造化出力+Visionが動作することを確認できた
-            # 座標形式の判定: regionsにrectがあれば座標値から推定
-            coordinate_mode = "pixel"  # デフォルト
-            regions = parsed.get("regions", [])
-            if regions and isinstance(regions, list):
-                for r in regions:
-                    rect = r.get("rect")
-                    if rect and isinstance(rect, dict):
-                        max_coord = max(
-                            rect.get("right", 0), rect.get("bottom", 0)
-                        )
-                        # テスト画像は1x1なので、座標が大きければ正規化座標
-                        if max_coord > 10:
-                            coordinate_mode = "normalized"
-                        break
-
-            logger.info(
-                f"Vision preflight成功: coordinate_mode={coordinate_mode}"
-            )
-            return (True, "", coordinate_mode)
+            # JSONパース可能であればVision+JSON構造化出力に対応
+            self._extract_json(result)
+            logger.info("Vision preflight成功: Vision + JSON対応確認")
+            return (True, "")
 
         except json.JSONDecodeError as e:
             msg = f"モデルがJSON構造化出力に対応していません: {e}"
             logger.warning(f"Vision preflight失敗: {msg}")
-            return (False, msg, None)
+            return (False, msg)
         except ApiKeyError as e:
-            return (False, str(e), None)
+            return (False, str(e))
         except NetworkError as e:
-            return (False, str(e), None)
+            return (False, str(e))
         except Exception as e:
             msg = f"Vision preflight失敗: {e}"
             logger.warning(msg)
-            return (False, msg, None)
+            return (False, msg)
 
     async def recognize_and_translate(
         self,
@@ -613,24 +828,34 @@ class LlmTranslateProvider(TranslationProvider):
             "You will receive a game screenshot. "
             f"Find all text, translate from {src_name} to {tgt_name}. "
             "Keep abbreviations (HP, MP, EXP, etc.) and proper nouns unchanged. "
+            "Group text by semantic meaning: merge consecutive lines that form a paragraph or sentence into ONE region. "
+            "Menu items, buttons, labels, and standalone UI elements must each be a SEPARATE region. "
+            "The rect must cover the entire grouped text area. "
+            "Use normalized coordinates 0-1000 for rect (0=top-left, 1000=bottom-right). "
             "Return JSON only."
         )
+        # グローバル + ゲーム別プロンプトを合成
+        additional = []
         if self._custom_prompt:
-            system_prompt += f"\n\n{self._custom_prompt}"
+            additional.append(self._custom_prompt)
+        if self._game_prompt:
+            additional.append(self._game_prompt)
+        if additional:
+            system_prompt += f"\n\n{chr(10).join(additional)}"
 
         if not image_base64.startswith("data:"):
-            image_base64 = f"data:image/jpeg;base64,{image_base64}"
+            image_base64 = f"data:image/png;base64,{image_base64}"
 
         user_content = [
             {"type": "image_url", "image_url": {"url": image_base64}},
             {
                 "type": "text",
                 "text": (
-                    f"Image size: {image_width}x{image_height}px. "
-                    "Return JSON:\n"
-                    '{"regions":[{"text":"original","translated_text":"翻訳",'
-                    '"rect":{"left":0,"top":0,"right":100,"bottom":50}}]}\n'
-                    "Use pixel coordinates."
+                    "Return compact single-line JSON (no newlines, no indentation):\n"
+                    '{"coordinate_mode":"normalized_0_1000","regions":[{"text":"original",'
+                    '"translated_text":"翻訳",'
+                    '"rect":{"left":0,"top":0,"right":500,"bottom":250}}]}\n'
+                    "Rect values are 0-1000 normalized (0=top-left, 1000=bottom-right)."
                 ),
             },
         ]
@@ -645,15 +870,70 @@ class LlmTranslateProvider(TranslationProvider):
             f"{source_lang} -> {target_lang}"
         )
 
+        # JSON構造を厳密に強制するスキーマ
+        # Gemini: responseSchema、OpenAI互換: json_schema として使用
+        vision_schema = {
+            "type": "object",
+            "properties": {
+                "coordinate_mode": {
+                    "type": "string",
+                    "enum": ["pixel", "normalized_0_1000"],
+                },
+                "regions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string"},
+                            "translated_text": {"type": "string"},
+                            "rect": {
+                                "type": "object",
+                                "properties": {
+                                    "left": {"type": "integer"},
+                                    "top": {"type": "integer"},
+                                    "right": {"type": "integer"},
+                                    "bottom": {"type": "integer"},
+                                },
+                                "required": ["left", "top", "right", "bottom"],
+                            },
+                        },
+                        "required": ["text", "translated_text", "rect"],
+                    },
+                },
+            },
+            "required": ["coordinate_mode", "regions"],
+        }
+
         result = await asyncio.to_thread(
             self._call_api, messages,
-            response_format={"type": "json_object"},
-            max_tokens=4096,
+            response_format={"type": "json_object", "schema": vision_schema},
+            max_tokens=8192,
+            timeout=60.0,
         )
-        logger.info(f"Vision output: {result[:500]!r}")
+        logger.info(f"Vision output ({len(result)} chars): {result[:500]!r}")
 
-        parsed = self._extract_json(result)
-        regions = parsed.get("regions", [])
+        try:
+            parsed = self._extract_json(result)
+        except json.JSONDecodeError as e:
+            # パース失敗 → 途切れたJSONの部分回復を試みる
+            logger.warning(
+                f"Vision JSONパースエラー: {e} — 部分回復を試行"
+            )
+            parsed = self._recover_truncated_json(result)
+            if parsed is None:
+                logger.error(f"Vision 部分回復も失敗。フルレスポンス ({len(result)} chars):\n{result}")
+                raise
+
+        # LLMが {"regions": [...]} または直接 [...] を返す場合の両方に対応
+        # coordinate_modeの自己申告を読み取る
+        reported_coordinate_mode = None
+        if isinstance(parsed, list):
+            regions = parsed
+        elif isinstance(parsed, dict):
+            regions = parsed.get("regions", [])
+            reported_coordinate_mode = parsed.get("coordinate_mode")
+        else:
+            raise ValueError(f"Invalid response type: {type(parsed)}")
 
         if not isinstance(regions, list):
             raise ValueError(f"Invalid response: 'regions' is not a list: {type(regions)}")
@@ -682,5 +962,8 @@ class LlmTranslateProvider(TranslationProvider):
                 },
             })
 
-        logger.info(f"Vision: {len(valid_regions)}/{len(regions)} valid regions")
-        return valid_regions
+        logger.info(
+            f"Vision: {len(valid_regions)}/{len(regions)} valid regions, "
+            f"reported_coordinate_mode={reported_coordinate_mode}"
+        )
+        return valid_regions, reported_coordinate_mode

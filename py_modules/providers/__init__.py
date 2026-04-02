@@ -69,6 +69,7 @@ class ProviderManager:
         self._llm_api_key = ""
         self._llm_model = ""
         self._llm_system_prompt = ""
+        self._llm_game_prompt = ""
         self._llm_disable_thinking = True
 
         # LLM画像再認識設定
@@ -89,6 +90,7 @@ class ProviderManager:
         api_key: str = None,
         model: str = None,
         system_prompt: str = None,
+        game_prompt: str = None,
         disable_thinking: bool = None,
         image_rerecognition: bool = None,
         image_confidence_threshold: float = None,
@@ -106,6 +108,8 @@ class ProviderManager:
             self._llm_model = model
         if system_prompt is not None:
             self._llm_system_prompt = system_prompt
+        if game_prompt is not None:
+            self._llm_game_prompt = game_prompt
         if disable_thinking is not None:
             self._llm_disable_thinking = disable_thinking
         if image_rerecognition is not None:
@@ -127,6 +131,7 @@ class ProviderManager:
             llm_provider.configure(
                 base_url=base_url, api_key=api_key,
                 model=model, system_prompt=system_prompt,
+                game_prompt=game_prompt,
                 disable_thinking=disable_thinking,
                 parallel=parallel,
             )
@@ -298,7 +303,7 @@ class ProviderManager:
                     self._google_api_key
                 )
             elif provider_type == ProviderType.LLM:
-                self._translation_providers[provider_type] = LlmTranslateProvider(
+                provider = LlmTranslateProvider(
                     base_url=self._llm_base_url,
                     api_key=self._llm_api_key,
                     model=self._llm_model,
@@ -306,6 +311,10 @@ class ProviderManager:
                     disable_thinking=self._llm_disable_thinking,
                     parallel=self._llm_parallel,
                 )
+                # ゲーム別プロンプトが保持されていれば適用
+                if self._llm_game_prompt:
+                    provider.configure(game_prompt=self._llm_game_prompt)
+                self._translation_providers[provider_type] = provider
 
         return self._translation_providers.get(provider_type)
 
@@ -666,7 +675,7 @@ sys.stdout.write(base64.b64encode(out.getvalue()).decode())
 
     @staticmethod
     def _resize_and_compress_image(
-        image_bytes: bytes, max_long_side: int = 1024, quality: int = 80,
+        image_bytes: bytes, max_long_side: int = 768, quality: int = 80,
     ) -> Optional[tuple]:
         """画像をリサイズ・JPEG圧縮して (base64_str, width, height) を返す。
         システムPythonサブプロセスでPIL使用。"""
@@ -737,18 +746,17 @@ json.dump({{"b64": b64, "w": w, "h": h}}, sys.stdout)
     def preflight_vision_check(self) -> dict:
         """LLMのVision + JSON構造化出力対応を検証する。
 
+        coordinate_modeの判定はここでは行わない（1x1テスト画像では判定不能なため）。
+        coordinate_modeは初回翻訳時に実測する。
+
         Returns:
             {"ok": bool, "message": str}
-            成功時はcoordinate_modeを内部に保持する。
         """
         provider = self.get_translation_provider(ProviderType.LLM)
         if not provider or not isinstance(provider, LlmTranslateProvider):
             return {"ok": False, "message": "LLMプロバイダーが設定されていません"}
 
-        success, message, coordinate_mode = provider.preflight_vision_check()
-        if success:
-            self._llm_coordinate_mode = coordinate_mode or "pixel"
-            logger.info(f"Vision preflight成功: coordinate_mode={self._llm_coordinate_mode}")
+        success, message = provider.preflight_vision_check()
         return {"ok": success, "message": message}
 
     async def recognize_and_translate(
@@ -772,35 +780,36 @@ json.dump({{"b64": b64, "w": w, "h": h}}, sys.stdout)
             logger.warning("Vision Translation: LLMプロバイダーが利用不可")
             return None
 
-        # 画像圧縮（速度改善の核心）
-        compressed = self._resize_and_compress_image(image_bytes)
-        if compressed:
-            image_b64, comp_w, comp_h = compressed
-            logger.info(
-                f"Vision: 画像圧縮 {image_width}x{image_height} -> {comp_w}x{comp_h}"
-            )
-        else:
-            # 圧縮失敗時はそのまま送信
-            image_b64 = base64.b64encode(image_bytes).decode()
-            comp_w, comp_h = image_width, image_height
-            logger.warning("Vision: 画像圧縮失敗、元画像を使用")
+        # 元画像をそのまま送信（Steam Deckは1280x800でリサイズ不要）
+        image_b64 = base64.b64encode(image_bytes).decode()
 
         try:
-            raw_regions = await provider.recognize_and_translate(
+            raw_regions, reported_mode = await provider.recognize_and_translate(
                 image_b64, source_lang, target_lang,
-                comp_w, comp_h,  # プロンプトには圧縮後のサイズを渡す
+                image_width, image_height,
             )
         except Exception as e:
             logger.error(f"Vision Translation失敗: {e}")
             return None
 
-        # 座標変換（2段: normalized/pixel → compressed → original）+ TranslatedRegion互換形式
+        # coordinate_modeの判定: LLMの自己申告を優先
+        # プロンプトでnormalized(0-1000)を指示しているため、未申告時もnormalized前提
+        if reported_mode and "pixel" in str(reported_mode).lower():
+            effective_mode = "pixel"
+            logger.info(f"coordinate_mode: LLM自己申告 pixel ({reported_mode})")
+        else:
+            effective_mode = "normalized"
+            if reported_mode:
+                logger.info(f"coordinate_mode: LLM自己申告 normalized ({reported_mode})")
+        self._llm_coordinate_mode = effective_mode
+
+        # 座標変換 + TranslatedRegion互換形式
         result = []
         for r in raw_regions:
             pixel_rect = self._to_original_pixel_coordinates(
                 r["rect"],
                 image_width, image_height,
-                comp_w, comp_h,
+                image_width, image_height,  # リサイズなしなのでcompressed=original
             )
             result.append({
                 "text": r["text"],

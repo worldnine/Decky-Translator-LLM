@@ -298,6 +298,12 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                     break;
                 case 'translationProvider':
                     logic.setTranslationProvider(value);
+                    // LLM以外に切り替えた場合、Vision Translationを無効化
+                    if (value !== 'llm' && settings.llmVisionTranslation) {
+                        dispatch({ type: 'UPDATE_SETTING', key: 'llmVisionTranslation', value: false });
+                        logic.setVisionTranslationEnabled(false);
+                        call<boolean>('set_setting', 'llm_vision_translation', false);
+                    }
                     break;
                 case 'googleApiKey':
                     logic.setHasGoogleApiKey(!!value);

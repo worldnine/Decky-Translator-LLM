@@ -1066,10 +1066,10 @@ class Plugin:
         return "\n".join(lines).strip()
 
     def _apply_game_prompt(self, game_prompt: str):
-        """ゲーム別プロンプトをLLMに適用する"""
+        """ゲーム別プロンプトをLLMに適用する（グローバルプロンプトとは別フィールド）"""
         self._current_game_prompt = game_prompt
         if self._provider_manager:
-            self._provider_manager.configure_llm(system_prompt=game_prompt)
+            self._provider_manager.configure_llm(game_prompt=game_prompt)
 
     async def ensure_game_prompt_file(self, app_id: int, display_name: str):
         """ゲーム別プロンプトファイルを確保し、内容を読み込んでプロンプトを適用する"""
@@ -1643,18 +1643,12 @@ class Plugin:
             return None
 
     async def preflight_vision_check(self):
-        """Vision Translationの事前検証RPC。set_settingとは独立。"""
+        """Vision Translationの事前検証RPC。Vision+JSON対応のみ確認。
+        coordinate_modeは初回翻訳時に実測する。"""
         try:
             if not self._provider_manager:
                 return {"ok": False, "message": "Provider manager not initialized"}
-            result = self._provider_manager.preflight_vision_check()
-            if result.get("ok"):
-                # coordinate_modeを永続化
-                coord_mode = self._provider_manager._llm_coordinate_mode
-                self._llm_coordinate_mode = coord_mode
-                self._settings.set_setting("llm_coordinate_mode", coord_mode)
-                logger.info(f"coordinate_mode saved: {coord_mode}")
-            return result
+            return self._provider_manager.preflight_vision_check()
         except Exception as e:
             logger.error(f"Vision preflight error: {e}")
             logger.error(traceback.format_exc())
