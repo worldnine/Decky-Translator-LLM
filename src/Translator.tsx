@@ -26,7 +26,7 @@ export class GameTranslatorLogic {
     private confidenceThreshold: number = 0.6; // Default confidence threshold
     private pauseGameOnOverlay: boolean = false;
     private hideIdenticalTranslations: boolean = false;
-    private visionTranslationEnabled: boolean = false;
+    private visionMode: string = "off";
 
     // Provider settings for upfront validation
     private ocrProvider: string = "rapidocr";
@@ -196,8 +196,8 @@ export class GameTranslatorLogic {
         this.hideIdenticalTranslations = enabled;
     }
 
-    setVisionTranslationEnabled = (enabled: boolean): void => {
-        this.visionTranslationEnabled = enabled;
+    setVisionMode = (mode: string): void => {
+        this.visionMode = mode;
     }
 
     setPauseGameOnOverlay = (enabled: boolean): void => {
@@ -391,7 +391,7 @@ export class GameTranslatorLogic {
 
                     // Vision Translation: OCRバイパスでLLMに直接画像送信
                     // LLMプロバイダーが選択されている場合のみ（他プロバイダーへの誤送信防止）
-                    if (this.visionTranslationEnabled && this.translationProvider === 'llm') {
+                    if (this.visionMode === 'direct') {
                         this.imageState.updateProcessingStep("Translating (Vision)");
                         const visionResult = await this.textTranslator.visionTranslate(result.base64);
                         if (visionResult && visionResult.length > 0) {

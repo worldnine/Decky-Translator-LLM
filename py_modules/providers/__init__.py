@@ -17,6 +17,7 @@ from .base import (
     NetworkError,
     ApiKeyError,
     RateLimitError,
+    ConfigurationError,
 )
 from .google_ocr import GoogleVisionProvider
 from .google_translate import GoogleTranslateProvider
@@ -24,6 +25,8 @@ from .ocrspace import OCRSpaceProvider
 from .free_translate import FreeTranslateProvider
 from .rapidocr_provider import RapidOCRProvider
 from .llm_translate import LlmTranslateProvider
+from .vision_base import VisionProvider
+from .gemini_vision import GeminiVisionProvider
 
 logger = logging.getLogger(__name__)
 
@@ -31,40 +34,44 @@ logger = logging.getLogger(__name__)
 __all__ = [
     'OCRProvider',
     'TranslationProvider',
+    'VisionProvider',
     'ProviderType',
     'TextRegion',
     'NetworkError',
     'ApiKeyError',
     'RateLimitError',
+    'ConfigurationError',
     'GoogleVisionProvider',
     'GoogleTranslateProvider',
     'OCRSpaceProvider',
     'FreeTranslateProvider',
     'RapidOCRProvider',
     'LlmTranslateProvider',
+    'GeminiVisionProvider',
     'ProviderManager',
 ]
 
 
 class ProviderManager:
-    """Factory and manager for OCR and Translation providers."""
+    """Factory and manager for OCR, Translation, and Vision providers."""
 
     def __init__(self):
         """Initialize the provider manager."""
         # Provider instances (created on demand)
         self._ocr_providers = {}
         self._translation_providers = {}
+        self._vision_provider: Optional[GeminiVisionProvider] = None
 
         # Configuration
-        self._use_free_providers = True  # Default to free providers
+        self._use_free_providers = True
         self._google_api_key = ""
-        self._ocr_provider_preference = "rapidocr"  # "rapidocr", "ocrspace", or "googlecloud"
-        self._translation_provider_preference = "freegoogle"  # "freegoogle", "googlecloud", or "llm"
-        self._rapidocr_confidence = 0.5  # Default RapidOCR confidence threshold (0.0-1.0)
-        self._rapidocr_box_thresh = 0.5  # Default RapidOCR box detection threshold (0.0-1.0)
-        self._rapidocr_unclip_ratio = 1.6  # Default RapidOCR box expansion ratio (1.0-3.0)
+        self._ocr_provider_preference = "rapidocr"
+        self._translation_provider_preference = "freegoogle"
+        self._rapidocr_confidence = 0.5
+        self._rapidocr_box_thresh = 0.5
+        self._rapidocr_unclip_ratio = 1.6
 
-        # LLM翻訳プロバイダー設定
+        # LLM翻訳プロバイダー設定（テキスト翻訳用）
         self._llm_base_url = ""
         self._llm_api_key = ""
         self._llm_model = ""
@@ -72,15 +79,15 @@ class ProviderManager:
         self._llm_game_prompt = ""
         self._llm_disable_thinking = True
 
-        # LLM画像再認識設定
-        self._llm_image_rerecognition = False
-        self._llm_image_confidence_threshold = 0.95
-        self._llm_image_send_all = False
-        self._llm_parallel = True
-
-        # Vision Translation設定（OCRバイパス）
-        self._llm_vision_translation = False
-        self._llm_coordinate_mode = "pixel"  # "pixel" or "normalized"
+        # Vision設定（OCR/Translation とは独立）
+        self._vision_mode = "off"  # "off", "assist", "direct"
+        self._vision_base_url = ""  # 空ならLLM設定をフォールバック
+        self._vision_api_key = ""
+        self._vision_model = ""
+        self._vision_parallel = True
+        self._vision_assist_confidence_threshold = 0.95
+        self._vision_assist_send_all = False
+        self._vision_coordinate_mode = "pixel"
 
         logger.debug("ProviderManager initialized")
 
@@ -92,14 +99,8 @@ class ProviderManager:
         system_prompt: str = None,
         game_prompt: str = None,
         disable_thinking: bool = None,
-        image_rerecognition: bool = None,
-        image_confidence_threshold: float = None,
-        image_send_all: bool = None,
-        parallel: bool = None,
-        vision_translation: bool = None,
-        coordinate_mode: str = None,
     ) -> None:
-        """LLM翻訳プロバイダーの設定を更新する。"""
+        """LLM翻訳プロバイダーの設定を更新する（テキスト翻訳用）。"""
         if base_url is not None:
             self._llm_base_url = base_url
         if api_key is not None:
@@ -112,18 +113,6 @@ class ProviderManager:
             self._llm_game_prompt = game_prompt
         if disable_thinking is not None:
             self._llm_disable_thinking = disable_thinking
-        if image_rerecognition is not None:
-            self._llm_image_rerecognition = image_rerecognition
-        if image_confidence_threshold is not None:
-            self._llm_image_confidence_threshold = image_confidence_threshold
-        if image_send_all is not None:
-            self._llm_image_send_all = image_send_all
-        if parallel is not None:
-            self._llm_parallel = parallel
-        if vision_translation is not None:
-            self._llm_vision_translation = vision_translation
-        if coordinate_mode is not None:
-            self._llm_coordinate_mode = coordinate_mode
 
         # 既存のLLMプロバイダーインスタンスがあれば更新
         llm_provider = self._translation_providers.get(ProviderType.LLM)
@@ -133,15 +122,68 @@ class ProviderManager:
                 model=model, system_prompt=system_prompt,
                 game_prompt=game_prompt,
                 disable_thinking=disable_thinking,
-                parallel=parallel,
             )
+
+        # Vision ProviderがLLM設定をフォールバックしている場合も更新
+        if self._vision_provider:
+            self._update_vision_provider_config()
+
         logger.debug(
             f"LLM config updated: base_url={self._llm_base_url}, "
-            f"model={self._llm_model}, disable_thinking={self._llm_disable_thinking}, "
-            f"image_rerecognition={self._llm_image_rerecognition}, "
-            f"image_confidence_threshold={self._llm_image_confidence_threshold}, "
-            f"vision_translation={self._llm_vision_translation}, "
-            f"coordinate_mode={self._llm_coordinate_mode}"
+            f"model={self._llm_model}, disable_thinking={self._llm_disable_thinking}"
+        )
+
+    def configure_vision(
+        self,
+        mode: str = None,
+        base_url: str = None,
+        api_key: str = None,
+        model: str = None,
+        parallel: bool = None,
+        assist_send_all: bool = None,
+        assist_confidence_threshold: float = None,
+        coordinate_mode: str = None,
+    ) -> None:
+        """Vision設定を更新する。"""
+        if mode is not None:
+            self._vision_mode = mode
+        if base_url is not None:
+            self._vision_base_url = base_url
+        if api_key is not None:
+            self._vision_api_key = api_key
+        if model is not None:
+            self._vision_model = model
+        if parallel is not None:
+            self._vision_parallel = parallel
+        if assist_send_all is not None:
+            self._vision_assist_send_all = assist_send_all
+        if assist_confidence_threshold is not None:
+            self._vision_assist_confidence_threshold = assist_confidence_threshold
+        if coordinate_mode is not None:
+            self._vision_coordinate_mode = coordinate_mode
+
+        # 既存のVision Providerがあれば更新
+        if self._vision_provider:
+            self._update_vision_provider_config()
+
+        logger.debug(
+            f"Vision config updated: mode={self._vision_mode}, "
+            f"parallel={self._vision_parallel}, "
+            f"assist_threshold={self._vision_assist_confidence_threshold}"
+        )
+
+    def _update_vision_provider_config(self) -> None:
+        """Vision Providerの設定を現在の状態に合わせて更新する。
+        Vision専用設定が空ならLLM設定をフォールバック。"""
+        if not self._vision_provider:
+            return
+        self._vision_provider.configure(
+            base_url=self._vision_base_url or self._llm_base_url,
+            api_key=self._vision_api_key or self._llm_api_key,
+            model=self._vision_model or self._llm_model,
+            disable_thinking=self._llm_disable_thinking,
+            custom_prompt=self._llm_system_prompt,
+            game_prompt=self._llm_game_prompt,
         )
 
     def configure(
@@ -151,41 +193,23 @@ class ProviderManager:
         ocr_provider: str = "",
         translation_provider: str = ""
     ) -> None:
-        """
-        Configure provider preferences.
-
-        Args:
-            use_free_providers: If True, use OCR.space + free Google Translate.
-                                If False, use Google Cloud APIs (requires API key).
-                                (Deprecated: use ocr_provider and translation_provider instead)
-            google_api_key: Google Cloud API key (only needed for googlecloud providers)
-            ocr_provider: OCR provider preference - "rapidocr", "ocrspace", or "googlecloud"
-            translation_provider: Translation provider preference - "freegoogle" or "googlecloud"
-        """
+        """Configure provider preferences."""
         self._google_api_key = google_api_key
 
-        # Handle ocr_provider setting (new way)
         if ocr_provider:
             self._ocr_provider_preference = ocr_provider
-            # Derive use_free_providers for backwards compatibility
             self._use_free_providers = (ocr_provider != "googlecloud")
         else:
-            # Backwards compatibility: derive from use_free_providers
             self._use_free_providers = use_free_providers
             self._ocr_provider_preference = "rapidocr" if use_free_providers else "googlecloud"
 
-        # Handle translation_provider setting
         if translation_provider:
             self._translation_provider_preference = translation_provider
         elif not translation_provider and ocr_provider:
-            # Backwards compatibility: if only ocr_provider is set, derive translation from it
-            # googlecloud OCR -> googlecloud translation, others -> freegoogle
             self._translation_provider_preference = "googlecloud" if ocr_provider == "googlecloud" else "freegoogle"
         elif not use_free_providers:
-            # Legacy: use_free_providers=False means Google Cloud for both
             self._translation_provider_preference = "googlecloud"
 
-        # Update Google Cloud providers with new API key
         if ProviderType.GOOGLE in self._ocr_providers:
             self._ocr_providers[ProviderType.GOOGLE].set_api_key(google_api_key)
         if ProviderType.GOOGLE in self._translation_providers:
@@ -198,26 +222,13 @@ class ProviderManager:
         )
 
     def set_rapidocr_confidence(self, confidence: float) -> None:
-        """
-        Set the RapidOCR confidence threshold.
-
-        Args:
-            confidence: Minimum confidence (0.0-1.0) for RapidOCR results.
-        """
         self._rapidocr_confidence = confidence
-        # Update existing RapidOCR provider if it exists
         rapidocr = self._ocr_providers.get(ProviderType.RAPIDOCR)
         if rapidocr:
             rapidocr.set_min_confidence(confidence)
         logger.debug(f"RapidOCR confidence set to {confidence}")
 
     def set_rapidocr_box_thresh(self, box_thresh: float) -> None:
-        """
-        Set the RapidOCR box detection threshold.
-
-        Args:
-            box_thresh: Detection box confidence (0.0-1.0). Lower values detect more text.
-        """
         self._rapidocr_box_thresh = box_thresh
         rapidocr = self._ocr_providers.get(ProviderType.RAPIDOCR)
         if rapidocr:
@@ -225,12 +236,6 @@ class ProviderManager:
         logger.debug(f"RapidOCR box_thresh set to {box_thresh}")
 
     def set_rapidocr_unclip_ratio(self, unclip_ratio: float) -> None:
-        """
-        Set the RapidOCR box expansion ratio.
-
-        Args:
-            unclip_ratio: Box expansion ratio (1.0-3.0). Higher values expand detected boxes.
-        """
         self._rapidocr_unclip_ratio = unclip_ratio
         rapidocr = self._ocr_providers.get(ProviderType.RAPIDOCR)
         if rapidocr:
@@ -238,25 +243,14 @@ class ProviderManager:
         logger.debug(f"RapidOCR unclip_ratio set to {unclip_ratio}")
 
     def get_ocr_provider(
-        self,
-        provider_type: Optional[ProviderType] = None
+        self, provider_type: Optional[ProviderType] = None
     ) -> Optional[OCRProvider]:
-        """
-        Get OCR provider, creating if necessary.
-
-        Args:
-            provider_type: Specific provider type, or None for default based on preference
-
-        Returns:
-            OCRProvider instance or None
-        """
         if provider_type is None:
-            # Determine provider type based on preference
             if self._ocr_provider_preference == "rapidocr":
                 provider_type = ProviderType.RAPIDOCR
             elif self._ocr_provider_preference == "ocrspace":
                 provider_type = ProviderType.OCR_SPACE
-            else:  # "googlecloud"
+            else:
                 provider_type = ProviderType.GOOGLE
 
         if provider_type not in self._ocr_providers:
@@ -274,20 +268,9 @@ class ProviderManager:
         return self._ocr_providers.get(provider_type)
 
     def get_translation_provider(
-        self,
-        provider_type: Optional[ProviderType] = None
+        self, provider_type: Optional[ProviderType] = None
     ) -> Optional[TranslationProvider]:
-        """
-        Get translation provider, creating if necessary.
-
-        Args:
-            provider_type: Specific provider type, or None for default based on preference
-
-        Returns:
-            TranslationProvider instance or None
-        """
         if provider_type is None:
-            # Use translation provider preference (independent of OCR choice)
             if self._translation_provider_preference == "googlecloud":
                 provider_type = ProviderType.GOOGLE
             elif self._translation_provider_preference == "llm":
@@ -309,30 +292,34 @@ class ProviderManager:
                     model=self._llm_model,
                     system_prompt=self._llm_system_prompt,
                     disable_thinking=self._llm_disable_thinking,
-                    parallel=self._llm_parallel,
+                    parallel=self._vision_parallel,
                 )
-                # ゲーム別プロンプトが保持されていれば適用
                 if self._llm_game_prompt:
                     provider.configure(game_prompt=self._llm_game_prompt)
                 self._translation_providers[provider_type] = provider
 
         return self._translation_providers.get(provider_type)
 
+    def get_vision_provider(self) -> Optional[GeminiVisionProvider]:
+        """Vision Providerを取得する。vision_mode=="off"ならNoneを返す。
+        Vision専用設定が空の場合、LLM設定をフォールバックとして使用する。"""
+        if self._vision_mode == "off":
+            return None
+
+        if self._vision_provider is None:
+            self._vision_provider = GeminiVisionProvider(
+                base_url=self._vision_base_url or self._llm_base_url,
+                api_key=self._vision_api_key or self._llm_api_key,
+                model=self._vision_model or self._llm_model,
+                disable_thinking=self._llm_disable_thinking,
+                custom_prompt=self._llm_system_prompt,
+                game_prompt=self._llm_game_prompt,
+            )
+        return self._vision_provider
+
     async def recognize_text(
-        self,
-        image_data: bytes,
-        language: str = "auto"
+        self, image_data: bytes, language: str = "auto"
     ) -> List[TextRegion]:
-        """
-        Perform OCR with automatic provider selection.
-
-        Args:
-            image_data: Raw image bytes
-            language: Language code or "auto"
-
-        Returns:
-            List of TextRegion objects
-        """
         provider = self.get_ocr_provider()
         if provider and provider.is_available(language):
             provider_name = provider.name
@@ -350,22 +337,7 @@ class ProviderManager:
         text_regions: List[dict] = None,
         image_bytes: bytes = None,
     ) -> List[str]:
-        """
-        Perform translation with automatic provider selection.
-
-        画像再認識が有効な場合、低信頼度のテキスト領域は切り出し画像付きで
-        LLMに送り、OCR再認識+翻訳を一括で行う。
-
-        Args:
-            texts: List of texts to translate
-            source_lang: Source language code
-            target_lang: Target language code
-            text_regions: OCR結果のTextRegion辞書リスト（画像再認識用、任意）
-            image_bytes: スクリーンショットのバイトデータ（画像再認識用、任意）
-
-        Returns:
-            List of translated texts
-        """
+        """翻訳を実行する。vision_mode=="assist"の場合、低信頼度領域を画像付きで処理。"""
         if not texts:
             return []
 
@@ -377,34 +349,35 @@ class ProviderManager:
         provider_name = provider.name
         logger.debug(f"Using {provider_name} for translation")
 
-        # 画像再認識が有効かつLLMプロバイダーの場合、低信頼度領域を画像付きで処理
+        # Vision assistモードの場合、低信頼度領域を画像付きで処理
         if (
-            self._llm_image_rerecognition
-            and self._translation_provider_preference == "llm"
+            self._vision_mode == "assist"
             and text_regions is not None
             and image_bytes is not None
-            and isinstance(provider, LlmTranslateProvider)
         ):
-            return await self._translate_with_image_rerecognition(
-                provider, texts, text_regions, image_bytes,
-                source_lang, target_lang,
-            )
+            vision_provider = self.get_vision_provider()
+            if vision_provider and vision_provider.is_available():
+                return await self._translate_with_vision_assist(
+                    provider, vision_provider, texts, text_regions, image_bytes,
+                    source_lang, target_lang,
+                )
 
         return await provider.translate_batch(texts, source_lang, target_lang)
 
-    async def _translate_with_image_rerecognition(
+    async def _translate_with_vision_assist(
         self,
-        provider: LlmTranslateProvider,
+        translation_provider: TranslationProvider,
+        vision_provider: GeminiVisionProvider,
         texts: List[str],
         text_regions: List[dict],
         image_bytes: bytes,
         source_lang: str,
         target_lang: str,
     ) -> List[str]:
-        """低信頼度領域を画像付きでLLMに翻訳依頼し、高信頼度領域はテキストのみで処理する。"""
-        threshold = self._llm_image_confidence_threshold
+        """低信頼度領域を画像付きでVision Providerに翻訳依頼し、
+        高信頼度領域はテキストのみで処理する。"""
+        threshold = self._vision_assist_confidence_threshold
 
-        # 全件送信モードまたは閾値ベースで分類
         high_conf_indices = []
         low_conf_indices = []
         for i, region in enumerate(text_regions):
@@ -414,27 +387,25 @@ class ProviderManager:
             logger.debug(
                 f"  region[{i}] confidence={confidence:.3f} text='{texts[i][:30]}'"
             )
-            if self._llm_image_send_all or confidence < threshold:
+            if self._vision_assist_send_all or confidence < threshold:
                 low_conf_indices.append(i)
             else:
                 high_conf_indices.append(i)
 
-        mode_label = "全件画像送信" if self._llm_image_send_all else f"閾値{threshold}"
+        mode_label = "全件画像送信" if self._vision_assist_send_all else f"閾値{threshold}"
         logger.info(
-            f"画像再認識({mode_label}): {len(low_conf_indices)}/{len(texts)} regions "
+            f"Vision assist({mode_label}): {len(low_conf_indices)}/{len(texts)} regions "
             f"(indices: {low_conf_indices})"
         )
 
-        # 結果配列を初期化
         results = list(texts)  # デフォルトは原文
 
-        # バッチ翻訳と画像翻訳を並列実行
         async def _batch_task():
             if not high_conf_indices:
                 return
             high_texts = [texts[i] for i in high_conf_indices]
             try:
-                high_translated = await provider.translate_batch(
+                high_translated = await translation_provider.translate_batch(
                     high_texts, source_lang, target_lang
                 )
                 for j, idx in enumerate(high_conf_indices):
@@ -445,14 +416,16 @@ class ProviderManager:
         async def _image_task():
             if not low_conf_indices:
                 return
-            if self._llm_parallel:
-                await self._translate_images_parallel(
-                    provider, texts, text_regions, image_bytes,
+            if self._vision_parallel:
+                await self._vision_assist_parallel(
+                    translation_provider, vision_provider,
+                    texts, text_regions, image_bytes,
                     low_conf_indices, results, source_lang, target_lang,
                 )
             else:
-                await self._translate_images_sequential(
-                    provider, texts, text_regions, image_bytes,
+                await self._vision_assist_sequential(
+                    translation_provider, vision_provider,
+                    texts, text_regions, image_bytes,
                     low_conf_indices, results, source_lang, target_lang,
                 )
 
@@ -460,9 +433,10 @@ class ProviderManager:
 
         return results
 
-    async def _translate_images_sequential(
+    async def _vision_assist_sequential(
         self,
-        provider: LlmTranslateProvider,
+        translation_provider: TranslationProvider,
+        vision_provider: GeminiVisionProvider,
         texts: List[str],
         text_regions: List[dict],
         image_bytes: bytes,
@@ -471,13 +445,13 @@ class ProviderManager:
         source_lang: str,
         target_lang: str,
     ) -> None:
-        """画像付き翻訳を逐次実行する。"""
+        """Vision assist: 画像付き翻訳を逐次実行する。"""
         for idx in indices:
             region = text_regions[idx]
             try:
                 crop_b64 = self._crop_region_base64(image_bytes, region["rect"])
                 if crop_b64:
-                    results[idx] = await provider.translate_with_image(
+                    results[idx] = await vision_provider.assist_translate(
                         ocr_text=texts[idx],
                         image_base64=crop_b64,
                         confidence=region.get("confidence", 0.0),
@@ -486,21 +460,22 @@ class ProviderManager:
                     )
                 else:
                     logger.warning(f"  切り出し失敗、テキストのみで翻訳 (index {idx})")
-                    results[idx] = await provider.translate(
+                    results[idx] = await translation_provider.translate(
                         texts[idx], source_lang, target_lang
                     )
             except Exception as e:
-                logger.warning(f"画像再認識翻訳エラー (index {idx}): {e}")
+                logger.warning(f"Vision assist翻訳エラー (index {idx}): {e}")
                 try:
-                    results[idx] = await provider.translate(
+                    results[idx] = await translation_provider.translate(
                         texts[idx], source_lang, target_lang
                     )
                 except Exception:
                     pass  # 原文のまま
 
-    async def _translate_images_parallel(
+    async def _vision_assist_parallel(
         self,
-        provider: LlmTranslateProvider,
+        translation_provider: TranslationProvider,
+        vision_provider: GeminiVisionProvider,
         texts: List[str],
         text_regions: List[dict],
         image_bytes: bytes,
@@ -509,7 +484,7 @@ class ProviderManager:
         source_lang: str,
         target_lang: str,
     ) -> None:
-        """画像付き翻訳を並列実行する（asyncio.gather）。"""
+        """Vision assist: 画像付き翻訳を並列実行する。"""
         # 先に全regionの画像を切り出し（サブプロセスなので逐次）
         crops = {}
         for idx in indices:
@@ -517,12 +492,11 @@ class ProviderManager:
                 image_bytes, text_regions[idx]["rect"]
             )
 
-        # 並列API呼び出し用のコルーチンを構築
         async def _translate_one(idx: int) -> tuple:
             crop_b64 = crops.get(idx)
             try:
                 if crop_b64:
-                    translated = await provider.translate_with_image(
+                    translated = await vision_provider.assist_translate(
                         ocr_text=texts[idx],
                         image_base64=crop_b64,
                         confidence=text_regions[idx].get("confidence", 0.0),
@@ -532,14 +506,14 @@ class ProviderManager:
                     return idx, translated
                 else:
                     logger.warning(f"  切り出し失敗、テキストのみで翻訳 (index {idx})")
-                    translated = await provider.translate(
+                    translated = await translation_provider.translate(
                         texts[idx], source_lang, target_lang
                     )
                     return idx, translated
             except Exception as e:
-                logger.warning(f"画像再認識翻訳エラー (index {idx}): {e}")
+                logger.warning(f"Vision assist翻訳エラー (index {idx}): {e}")
                 try:
-                    translated = await provider.translate(
+                    translated = await translation_provider.translate(
                         texts[idx], source_lang, target_lang
                     )
                     return idx, translated
@@ -645,15 +619,12 @@ sys.stdout.write(base64.b64encode(out.getvalue()).decode())
         original_w: int, original_h: int,
         compressed_w: int, compressed_h: int,
     ) -> dict:
-        """LLM返却座標 → 元画像のピクセル座標に変換する。2段変換:
-        1. normalized(0-1000) → 圧縮画像ピクセル（coordinate_mode=="normalized"の場合）
-        2. 圧縮画像ピクセル → 元画像ピクセル（圧縮していた場合）
-        """
+        """LLM返却座標 → 元画像のピクセル座標に変換する。"""
         l, t = float(rect["left"]), float(rect["top"])
         r, b = float(rect["right"]), float(rect["bottom"])
 
         # Stage 1: normalized → compressed pixel
-        if self._llm_coordinate_mode == "normalized":
+        if self._vision_coordinate_mode == "normalized":
             l = l * compressed_w / 1000
             t = t * compressed_h / 1000
             r = r * compressed_w / 1000
@@ -677,8 +648,7 @@ sys.stdout.write(base64.b64encode(out.getvalue()).decode())
     def _resize_and_compress_image(
         image_bytes: bytes, max_long_side: int = 768, quality: int = 80,
     ) -> Optional[tuple]:
-        """画像をリサイズ・JPEG圧縮して (base64_str, width, height) を返す。
-        システムPythonサブプロセスでPIL使用。"""
+        """画像をリサイズ・JPEG圧縮して (base64_str, width, height) を返す。"""
         try:
             python_path = ""
             for path in ['/usr/bin/python3', '/usr/bin/python3.13', '/usr/local/bin/python3']:
@@ -744,19 +714,14 @@ json.dump({{"b64": b64, "w": w, "h": h}}, sys.stdout)
             return None
 
     def preflight_vision_check(self) -> dict:
-        """LLMのVision + JSON構造化出力対応を検証する。
+        """Vision + JSON構造化出力対応を検証する。"""
+        vision_provider = self.get_vision_provider()
+        if not vision_provider:
+            return {"ok": False, "message": "Vision Providerが設定されていません"}
+        if not vision_provider.is_available():
+            return {"ok": False, "message": "Vision用のbase_urlとmodelを設定してください"}
 
-        coordinate_modeの判定はここでは行わない（1x1テスト画像では判定不能なため）。
-        coordinate_modeは初回翻訳時に実測する。
-
-        Returns:
-            {"ok": bool, "message": str}
-        """
-        provider = self.get_translation_provider(ProviderType.LLM)
-        if not provider or not isinstance(provider, LlmTranslateProvider):
-            return {"ok": False, "message": "LLMプロバイダーが設定されていません"}
-
-        success, message = provider.preflight_vision_check()
+        success, message = vision_provider.preflight_check()
         return {"ok": success, "message": message}
 
     async def recognize_and_translate(
@@ -767,33 +732,24 @@ json.dump({{"b64": b64, "w": w, "h": h}}, sys.stdout)
         image_width: int,
         image_height: int,
     ) -> Optional[List[dict]]:
-        """Vision Translation: スクリーンショットから直接テキスト検出+翻訳。
-
-        画像を圧縮してLLMに送信、返却座標を元解像度に再スケーリングする。
-
-        Returns:
-            成功: TranslatedRegion互換の辞書リスト
-            失敗: None
-        """
-        provider = self.get_translation_provider(ProviderType.LLM)
-        if not provider or not isinstance(provider, LlmTranslateProvider):
-            logger.warning("Vision Translation: LLMプロバイダーが利用不可")
+        """Vision direct: スクリーンショットから直接テキスト検出+翻訳。"""
+        vision_provider = self.get_vision_provider()
+        if not vision_provider or not vision_provider.is_available():
+            logger.warning("Vision direct: Vision Providerが利用不可")
             return None
 
-        # 元画像をそのまま送信（Steam Deckは1280x800でリサイズ不要）
         image_b64 = base64.b64encode(image_bytes).decode()
 
         try:
-            raw_regions, reported_mode = await provider.recognize_and_translate(
+            raw_regions, reported_mode = await vision_provider.direct_translate(
                 image_b64, source_lang, target_lang,
                 image_width, image_height,
             )
         except Exception as e:
-            logger.error(f"Vision Translation失敗: {e}")
+            logger.error(f"Vision direct失敗: {e}")
             return None
 
         # coordinate_modeの判定: LLMの自己申告を優先
-        # プロンプトでnormalized(0-1000)を指示しているため、未申告時もnormalized前提
         if reported_mode and "pixel" in str(reported_mode).lower():
             effective_mode = "pixel"
             logger.info(f"coordinate_mode: LLM自己申告 pixel ({reported_mode})")
@@ -801,7 +757,7 @@ json.dump({{"b64": b64, "w": w, "h": h}}, sys.stdout)
             effective_mode = "normalized"
             if reported_mode:
                 logger.info(f"coordinate_mode: LLM自己申告 normalized ({reported_mode})")
-        self._llm_coordinate_mode = effective_mode
+        self._vision_coordinate_mode = effective_mode
 
         # 座標変換 + TranslatedRegion互換形式
         result = []
@@ -809,7 +765,7 @@ json.dump({{"b64": b64, "w": w, "h": h}}, sys.stdout)
             pixel_rect = self._to_original_pixel_coordinates(
                 r["rect"],
                 image_width, image_height,
-                image_width, image_height,  # リサイズなしなのでcompressed=original
+                image_width, image_height,
             )
             result.append({
                 "text": r["text"],
@@ -819,16 +775,10 @@ json.dump({{"b64": b64, "w": w, "h": h}}, sys.stdout)
                 "isDialog": False,
             })
 
-        logger.info(f"Vision Translation完了: {len(result)} regions")
+        logger.info(f"Vision direct完了: {len(result)} regions")
         return result
 
     def get_provider_status(self) -> dict:
-        """
-        Get current provider configuration and availability status.
-
-        Returns:
-            Dictionary with provider status information
-        """
         ocr_provider = self.get_ocr_provider()
         trans_provider = self.get_translation_provider()
 
@@ -843,15 +793,12 @@ json.dump({{"b64": b64, "w": w, "h": h}}, sys.stdout)
             "translation_available": trans_provider.is_available("auto", "en") if trans_provider else False,
         }
 
-        # Add OCR.space usage stats if using ocrspace (OCR.space) provider
         if self._ocr_provider_preference == "ocrspace" and ocr_provider:
             if hasattr(ocr_provider, 'get_usage_stats'):
                 status["ocr_usage"] = ocr_provider.get_usage_stats()
 
-        # Add RapidOCR availability info
         rapidocr = self._ocr_providers.get(ProviderType.RAPIDOCR)
         if rapidocr is None:
-            # Create temporarily to check availability
             rapidocr = RapidOCRProvider(min_confidence=self._rapidocr_confidence)
         status["rapidocr_available"] = rapidocr.is_available()
         status["rapidocr_languages"] = rapidocr.get_supported_languages() if rapidocr.is_available() else []

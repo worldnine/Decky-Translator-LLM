@@ -880,18 +880,19 @@ class Plugin:
     _google_vision_api_key: str = ""
     _google_translate_api_key: str = ""
 
-    # LLM翻訳プロバイダー設定
+    # LLM翻訳プロバイダー設定（テキスト翻訳用）
     _llm_base_url: str = ""
     _llm_api_key: str = ""
     _llm_model: str = ""
     _llm_system_prompt: str = ""
     _llm_disable_thinking: bool = True
-    _llm_image_rerecognition: bool = False
-    _llm_image_confidence_threshold: float = 0.95
-    _llm_image_send_all: bool = False
-    _llm_parallel: bool = True
-    _llm_vision_translation: bool = False
-    _llm_coordinate_mode: str = "pixel"
+
+    # Vision設定（OCR/Translationとは独立）
+    _vision_mode: str = "off"  # "off", "assist", "direct"
+    _vision_parallel: bool = True
+    _vision_assist_confidence_threshold: float = 0.95
+    _vision_assist_send_all: bool = False
+    _vision_coordinate_mode: str = "pixel"
 
     # ゲーム別プロンプト（現在適用中のゲーム別プロンプト内容）
     _current_game_prompt: str = ""
@@ -1023,26 +1024,23 @@ class Plugin:
                 self._llm_disable_thinking = value
                 if self._provider_manager:
                     self._provider_manager.configure_llm(disable_thinking=value)
-            elif key == "llm_image_rerecognition":
-                self._llm_image_rerecognition = value
+            # Vision設定
+            elif key == "vision_mode":
+                self._vision_mode = value
                 if self._provider_manager:
-                    self._provider_manager.configure_llm(image_rerecognition=value)
-            elif key == "llm_image_confidence_threshold":
-                self._llm_image_confidence_threshold = value
+                    self._provider_manager.configure_vision(mode=value)
+            elif key == "vision_parallel":
+                self._vision_parallel = value
                 if self._provider_manager:
-                    self._provider_manager.configure_llm(image_confidence_threshold=value)
-            elif key == "llm_image_send_all":
-                self._llm_image_send_all = value
+                    self._provider_manager.configure_vision(parallel=value)
+            elif key == "vision_assist_confidence_threshold":
+                self._vision_assist_confidence_threshold = value
                 if self._provider_manager:
-                    self._provider_manager.configure_llm(image_send_all=value)
-            elif key == "llm_parallel":
-                self._llm_parallel = value
+                    self._provider_manager.configure_vision(assist_confidence_threshold=value)
+            elif key == "vision_assist_send_all":
+                self._vision_assist_send_all = value
                 if self._provider_manager:
-                    self._provider_manager.configure_llm(parallel=value)
-            elif key == "llm_vision_translation":
-                self._llm_vision_translation = value
-                if self._provider_manager:
-                    self._provider_manager.configure_llm(vision_translation=value)
+                    self._provider_manager.configure_vision(assist_send_all=value)
             else:
                 logger.warning(f"Unknown setting key: {key}")
 
@@ -1171,11 +1169,10 @@ class Plugin:
                 "llm_model": self._llm_model,
                 "llm_system_prompt": self._llm_system_prompt,
                 "llm_disable_thinking": self._llm_disable_thinking,
-                "llm_image_rerecognition": self._llm_image_rerecognition,
-                "llm_image_confidence_threshold": self._llm_image_confidence_threshold,
-                "llm_image_send_all": self._llm_image_send_all,
-                "llm_parallel": self._llm_parallel,
-                "llm_vision_translation": self._llm_vision_translation,
+                "vision_mode": self._vision_mode,
+                "vision_parallel": self._vision_parallel,
+                "vision_assist_confidence_threshold": self._vision_assist_confidence_threshold,
+                "vision_assist_send_all": self._vision_assist_send_all,
             }
             return settings
         except Exception as e:
@@ -1928,12 +1925,43 @@ class Plugin:
             self._llm_model = self._settings.get_setting("llm_model", "")
             self._llm_system_prompt = self._settings.get_setting("llm_system_prompt", "")
             self._llm_disable_thinking = self._settings.get_setting("llm_disable_thinking", True)
-            self._llm_image_rerecognition = self._settings.get_setting("llm_image_rerecognition", False)
-            self._llm_image_confidence_threshold = self._settings.get_setting("llm_image_confidence_threshold", 0.95)
-            self._llm_image_send_all = self._settings.get_setting("llm_image_send_all", False)
-            self._llm_parallel = self._settings.get_setting("llm_parallel", True)
-            self._llm_vision_translation = self._settings.get_setting("llm_vision_translation", False)
-            self._llm_coordinate_mode = self._settings.get_setting("llm_coordinate_mode", "pixel")
+
+            # Vision設定を読み込み（旧設定からの自動マイグレーション付き）
+            saved_vision_mode = self._settings.get_setting("vision_mode", None)
+            if saved_vision_mode is not None:
+                # 新設定が存在する場合はそのまま使用
+                self._vision_mode = saved_vision_mode
+            else:
+                # 旧設定からマイグレーション
+                old_vision = self._settings.get_setting("llm_vision_translation", False)
+                old_assist = self._settings.get_setting("llm_image_rerecognition", False)
+                if old_vision:
+                    self._vision_mode = "direct"
+                elif old_assist:
+                    self._vision_mode = "assist"
+                else:
+                    self._vision_mode = "off"
+                # 新設定として保存
+                self._settings.set_setting("vision_mode", self._vision_mode)
+                logger.info(f"設定マイグレーション: vision_mode={self._vision_mode} "
+                           f"(旧: llm_vision_translation={old_vision}, llm_image_rerecognition={old_assist})")
+
+            self._vision_parallel = self._settings.get_setting(
+                "vision_parallel",
+                self._settings.get_setting("llm_parallel", True)  # 旧設定フォールバック
+            )
+            self._vision_assist_confidence_threshold = self._settings.get_setting(
+                "vision_assist_confidence_threshold",
+                self._settings.get_setting("llm_image_confidence_threshold", 0.95)
+            )
+            self._vision_assist_send_all = self._settings.get_setting(
+                "vision_assist_send_all",
+                self._settings.get_setting("llm_image_send_all", False)
+            )
+            self._vision_coordinate_mode = self._settings.get_setting(
+                "vision_coordinate_mode",
+                self._settings.get_setting("llm_coordinate_mode", "pixel")
+            )
 
             # Initialize provider manager
             self._provider_manager = ProviderManager()
@@ -1952,13 +1980,16 @@ class Plugin:
                     model=self._llm_model,
                     system_prompt=self._llm_system_prompt,
                     disable_thinking=self._llm_disable_thinking,
-                    image_rerecognition=self._llm_image_rerecognition,
-                    image_confidence_threshold=self._llm_image_confidence_threshold,
-                    image_send_all=self._llm_image_send_all,
-                    parallel=self._llm_parallel,
-                    vision_translation=self._llm_vision_translation,
-                    coordinate_mode=self._llm_coordinate_mode,
                 )
+
+            # Vision設定をプロバイダーマネージャーに適用
+            self._provider_manager.configure_vision(
+                mode=self._vision_mode,
+                parallel=self._vision_parallel,
+                assist_confidence_threshold=self._vision_assist_confidence_threshold,
+                assist_send_all=self._vision_assist_send_all,
+                coordinate_mode=self._vision_coordinate_mode,
+            )
 
             # Load and apply RapidOCR-specific settings
             if self._settings.get_setting("custom_recognition_settings", False):

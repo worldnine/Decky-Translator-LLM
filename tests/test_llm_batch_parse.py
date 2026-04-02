@@ -96,7 +96,7 @@ class TestTranslateBatch:
     """translate_batch の欠落補完ロジックをテスト。"""
 
     def test_全件成功でそのまま返す(self, provider):
-        with patch.object(provider, "_call_api", return_value="[1] A\n[2] B"):
+        with patch.object(provider._client, "call", return_value="[1] A\n[2] B"):
             result = asyncio.get_event_loop().run_until_complete(
                 provider.translate_batch(["x", "y"], "en", "ja")
             )
@@ -104,7 +104,7 @@ class TestTranslateBatch:
 
     def test_欠落分だけ個別翻訳で補完(self, provider):
         # バッチでは [2] が欠落
-        with patch.object(provider, "_call_api", return_value="[1] A\n[3] C") as mock_api:
+        with patch.object(provider._client, "call", return_value="[1] A\n[3] C") as mock_api:
             # 個別翻訳時の _call_api 呼び出し
             def side_effect(messages, temperature=0.1):
                 # 最初の呼び出しはバッチ
@@ -121,7 +121,7 @@ class TestTranslateBatch:
         assert result == ["A", "B", "C"]
 
     def test_個別翻訳も失敗したら原文を返す(self, provider):
-        with patch.object(provider, "_call_api") as mock_api:
+        with patch.object(provider._client, "call") as mock_api:
             def side_effect(messages, temperature=0.1):
                 if mock_api.call_count == 1:
                     return "[1] A"  # [2] 欠落
@@ -135,9 +135,11 @@ class TestTranslateBatch:
         assert result == ["A", "y"]  # 欠落分は原文
 
     def test_バッチAPI自体がエラーなら全件個別翻訳(self, provider):
+        # 並列実行だと呼び出し順が不定なため、テスト用に逐次モードにする
+        provider._parallel = False
         call_count = 0
 
-        with patch.object(provider, "_call_api") as mock_api:
+        with patch.object(provider._client, "call") as mock_api:
             def side_effect(messages, temperature=0.1):
                 nonlocal call_count
                 call_count += 1
@@ -152,9 +154,10 @@ class TestTranslateBatch:
                 provider.translate_batch(["a", "b"], "en", "ja")
             )
         assert result == ["translated_1", "translated_2"]
+        provider._parallel = True  # 復元
 
     def test_テキスト1件なら単一翻訳を使う(self, provider):
-        with patch.object(provider, "_call_api", return_value="翻訳結果"):
+        with patch.object(provider._client, "call", return_value="翻訳結果"):
             result = asyncio.get_event_loop().run_until_complete(
                 provider.translate_batch(["hello"], "en", "ja")
             )

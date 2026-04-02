@@ -14,29 +14,31 @@ export interface Settings {
     initialized: boolean;
     holdTimeTranslate: number;
     holdTimeDismiss: number;
-    confidenceThreshold: number; // New setting for confidence threshold
-    rapidocrConfidence: number; // RapidOCR-specific confidence threshold (0.0-1.0)
-    rapidocrBoxThresh: number; // RapidOCR box detection threshold (0.0-1.0)
-    rapidocrUnclipRatio: number; // RapidOCR box expansion ratio (1.0-3.0)
-    pauseGameOnOverlay: boolean; // Setting to control pausing game when overlay is shown
-    quickToggleEnabled: boolean; // Quick toggle overlay with right button in combo modes
-    useFreeProviders: boolean; // Use free providers (OCR.space + free Google Translate) - deprecated, use ocrProvider
-    ocrProvider: 'rapidocr' | 'ocrspace' | 'googlecloud'; // OCR provider: rapidocr (RapidOCR), ocrspace (OCR.space), googlecloud (Google Cloud)
-    translationProvider: 'freegoogle' | 'googlecloud' | 'llm'; // Translation provider: freegoogle (Free Google Translate), googlecloud (Google Cloud Translation), llm (LLM OpenAI互換)
-    googleApiKey: string; // Google Cloud Vision API key for text recognition
-    llmBaseUrl: string; // LLM API Base URL (OpenAI互換)
-    llmApiKey: string; // LLM API Key
-    llmModel: string; // LLMモデル名
-    llmSystemPrompt: string; // LLMシステムプロンプト
-    llmDisableThinking: boolean; // LLM thinkingモード無効化
-    llmImageRerecognition: boolean; // 低信頼度領域を画像で再認識
-    llmImageConfidenceThreshold: number; // 画像再認識の信頼度閾値（0.0-1.0）
-    llmImageSendAll: boolean; // 全領域を画像付きで送信
-    llmParallel: boolean; // 画像翻訳APIを並列呼び出し
-    llmVisionTranslation: boolean; // Vision Translation (OCRバイパス)
-    debugMode: boolean; // Debug mode for verbose console logging
-    fontScale: number; // Overlay font scale multiplier for external monitors
-    groupingPower: number; // Text grouping aggressiveness (0.25 normal - 1.0 huge)
+    confidenceThreshold: number;
+    rapidocrConfidence: number;
+    rapidocrBoxThresh: number;
+    rapidocrUnclipRatio: number;
+    pauseGameOnOverlay: boolean;
+    quickToggleEnabled: boolean;
+    useFreeProviders: boolean;
+    ocrProvider: 'rapidocr' | 'ocrspace' | 'googlecloud';
+    translationProvider: 'freegoogle' | 'googlecloud' | 'llm';
+    googleApiKey: string;
+    // LLM翻訳設定（テキスト翻訳用）
+    llmBaseUrl: string;
+    llmApiKey: string;
+    llmModel: string;
+    llmSystemPrompt: string;
+    llmDisableThinking: boolean;
+    // Vision設定（OCR/Translationとは独立）
+    visionMode: 'off' | 'assist' | 'direct';
+    visionParallel: boolean;
+    visionAssistSendAll: boolean;
+    visionAssistConfidenceThreshold: number;
+    // 表示設定
+    debugMode: boolean;
+    fontScale: number;
+    groupingPower: number;
     hideIdenticalTranslations: boolean;
     allowLabelGrowth: boolean;
     customRecognitionSettings: boolean;
@@ -52,32 +54,31 @@ type SettingsAction =
 const initialSettings: Settings = {
     inputLanguage: "",
     targetLanguage: "",
-    inputMode: InputMode.L5_BUTTON,  // Default to L5 back button
+    inputMode: InputMode.L5_BUTTON,
     enabled: true,
     initialized: false,
-    holdTimeTranslate: 1000, // Default to 1 second (1000ms)
-    holdTimeDismiss: 500,    // Default to 0.5 seconds (500ms)
-    confidenceThreshold: 0.6, // Default confidence threshold
-    rapidocrConfidence: 0.5, // Default RapidOCR confidence threshold (0.0-1.0)
-    rapidocrBoxThresh: 0.5, // Default RapidOCR box detection threshold (0.0-1.0)
-    rapidocrUnclipRatio: 1.6, // Default RapidOCR box expansion ratio (1.0-3.0)
-    pauseGameOnOverlay: false, // Default to not pausing game
-    quickToggleEnabled: false, // Default to disabled
-    useFreeProviders: true, // Default to free providers (no API key needed) - deprecated
-    ocrProvider: "rapidocr", // Default to rapidocr (RapidOCR) provider
-    translationProvider: "freegoogle", // Default to free Google Translate
-    googleApiKey: "", // Empty by default, only needed for Google Cloud
-    llmBaseUrl: "", // LLM API Base URL
-    llmApiKey: "", // LLM API Key
-    llmModel: "", // LLMモデル名
-    llmSystemPrompt: "", // カスタムシステムプロンプト
-    llmDisableThinking: true, // デフォルトでthinkingモードを無効化
-    llmImageRerecognition: false, // デフォルトで画像再認識無効
-    llmImageConfidenceThreshold: 0.95, // デフォルト閾値（RapidOCRは0.9+に集中するため高めに設定）
-    llmImageSendAll: false, // デフォルトで全件送信無効
-    llmParallel: true, // デフォルトで並列呼び出し有効（クラウドAPI向け）
-    llmVisionTranslation: false, // デフォルトでVision Translation無効
-    debugMode: false, // Debug mode off by default
+    holdTimeTranslate: 1000,
+    holdTimeDismiss: 500,
+    confidenceThreshold: 0.6,
+    rapidocrConfidence: 0.5,
+    rapidocrBoxThresh: 0.5,
+    rapidocrUnclipRatio: 1.6,
+    pauseGameOnOverlay: false,
+    quickToggleEnabled: false,
+    useFreeProviders: true,
+    ocrProvider: "rapidocr",
+    translationProvider: "freegoogle",
+    googleApiKey: "",
+    llmBaseUrl: "",
+    llmApiKey: "",
+    llmModel: "",
+    llmSystemPrompt: "",
+    llmDisableThinking: true,
+    visionMode: "off",
+    visionParallel: true,
+    visionAssistSendAll: false,
+    visionAssistConfidenceThreshold: 0.95,
+    debugMode: false,
     fontScale: 1.0,
     groupingPower: 0.25,
     hideIdenticalTranslations: false,
@@ -135,27 +136,26 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                     enabled: serverSettings.enabled,
                     holdTimeTranslate: serverSettings.hold_time_translate,
                     holdTimeDismiss: serverSettings.hold_time_dismiss,
-                    confidenceThreshold: serverSettings.confidence_threshold || 0.6, // Add default if not present
-                    rapidocrConfidence: serverSettings.rapidocr_confidence ?? 0.5, // RapidOCR confidence (0.0-1.0)
-                    rapidocrBoxThresh: serverSettings.rapidocr_box_thresh ?? 0.5, // RapidOCR box threshold (0.0-1.0)
-                    rapidocrUnclipRatio: serverSettings.rapidocr_unclip_ratio ?? 1.6, // RapidOCR unclip ratio (1.0-3.0)
-                    pauseGameOnOverlay: serverSettings.pause_game_on_overlay || false, // Add default if not present
-                    quickToggleEnabled: serverSettings.quick_toggle_enabled || false, // Add default if not present
-                    useFreeProviders: serverSettings.use_free_providers !== false, // Default to true (deprecated)
-                    ocrProvider: serverSettings.ocr_provider || "rapidocr", // OCR provider setting
-                    translationProvider: serverSettings.translation_provider || "freegoogle", // Translation provider setting
-                    googleApiKey: serverSettings.google_api_key || "", // Google API key
+                    confidenceThreshold: serverSettings.confidence_threshold || 0.6,
+                    rapidocrConfidence: serverSettings.rapidocr_confidence ?? 0.5,
+                    rapidocrBoxThresh: serverSettings.rapidocr_box_thresh ?? 0.5,
+                    rapidocrUnclipRatio: serverSettings.rapidocr_unclip_ratio ?? 1.6,
+                    pauseGameOnOverlay: serverSettings.pause_game_on_overlay || false,
+                    quickToggleEnabled: serverSettings.quick_toggle_enabled || false,
+                    useFreeProviders: serverSettings.use_free_providers !== false,
+                    ocrProvider: serverSettings.ocr_provider || "rapidocr",
+                    translationProvider: serverSettings.translation_provider || "freegoogle",
+                    googleApiKey: serverSettings.google_api_key || "",
                     llmBaseUrl: serverSettings.llm_base_url || "",
                     llmApiKey: serverSettings.llm_api_key || "",
                     llmModel: serverSettings.llm_model || "",
                     llmSystemPrompt: serverSettings.llm_system_prompt || "",
                     llmDisableThinking: serverSettings.llm_disable_thinking ?? true,
-                    llmImageRerecognition: serverSettings.llm_image_rerecognition ?? false,
-                    llmImageConfidenceThreshold: serverSettings.llm_image_confidence_threshold ?? 0.95,
-                    llmImageSendAll: serverSettings.llm_image_send_all ?? false,
-                    llmParallel: serverSettings.llm_parallel ?? false,
-                    llmVisionTranslation: serverSettings.llm_vision_translation ?? false,
-                    debugMode: serverSettings.debug_mode || false, // Debug mode
+                    visionMode: serverSettings.vision_mode ?? "off",
+                    visionParallel: serverSettings.vision_parallel ?? true,
+                    visionAssistSendAll: serverSettings.vision_assist_send_all ?? false,
+                    visionAssistConfidenceThreshold: serverSettings.vision_assist_confidence_threshold ?? 0.95,
+                    debugMode: serverSettings.debug_mode || false,
                     fontScale: serverSettings.font_scale ?? 1.0,
                     groupingPower: serverSettings.grouping_power ?? 0.25,
                     hideIdenticalTranslations: serverSettings.hide_identical_translations ?? false,
@@ -173,10 +173,10 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                 logic.setEnabled(serverSettings.enabled);
                 logic.setHoldTimeTranslate(serverSettings.hold_time_translate);
                 logic.setHoldTimeDismiss(serverSettings.hold_time_dismiss);
-                logic.setConfidenceThreshold(serverSettings.confidence_threshold || 0.6); // Set in logic
-                logic.setPauseGameOnOverlay(serverSettings.pause_game_on_overlay || false); // Set pause on overlay setting
-                logic.setQuickToggleEnabled(serverSettings.quick_toggle_enabled || false); // Set quick toggle setting
-                logger.setEnabled(serverSettings.debug_mode || false); // Set debug mode for logger
+                logic.setConfidenceThreshold(serverSettings.confidence_threshold || 0.6);
+                logic.setPauseGameOnOverlay(serverSettings.pause_game_on_overlay || false);
+                logic.setQuickToggleEnabled(serverSettings.quick_toggle_enabled || false);
+                logger.setEnabled(serverSettings.debug_mode || false);
 
                 // Set provider settings for upfront API key validation
                 logic.setOcrProvider(serverSettings.ocr_provider || "rapidocr");
@@ -187,7 +187,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                 logic.setGroupingPower(serverSettings.grouping_power ?? 0.25);
                 logic.setHideIdenticalTranslations(serverSettings.hide_identical_translations ?? false);
                 logic.setAllowLabelGrowth(serverSettings.allow_label_growth ?? false);
-                logic.setVisionTranslationEnabled(serverSettings.llm_vision_translation ?? false);
+                logic.setVisionMode(serverSettings.vision_mode ?? "off");
 
                 logger.info('SettingsContext', 'All settings loaded successfully');
                 logger.logObject('SettingsContext', 'Settings', mappedSettings);
@@ -231,11 +231,10 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                 llmModel: 'llm_model',
                 llmSystemPrompt: 'llm_system_prompt',
                 llmDisableThinking: 'llm_disable_thinking',
-                llmImageRerecognition: 'llm_image_rerecognition',
-                llmImageConfidenceThreshold: 'llm_image_confidence_threshold',
-                llmImageSendAll: 'llm_image_send_all',
-                llmParallel: 'llm_parallel',
-                llmVisionTranslation: 'llm_vision_translation',
+                visionMode: 'vision_mode',
+                visionParallel: 'vision_parallel',
+                visionAssistSendAll: 'vision_assist_send_all',
+                visionAssistConfidenceThreshold: 'vision_assist_confidence_threshold',
                 debugMode: 'debug_mode',
                 fontScale: 'font_scale',
                 groupingPower: 'grouping_power',
@@ -298,18 +297,12 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                     break;
                 case 'translationProvider':
                     logic.setTranslationProvider(value);
-                    // LLM以外に切り替えた場合、Vision Translationを無効化
-                    if (value !== 'llm' && settings.llmVisionTranslation) {
-                        dispatch({ type: 'UPDATE_SETTING', key: 'llmVisionTranslation', value: false });
-                        logic.setVisionTranslationEnabled(false);
-                        call<boolean>('set_setting', 'llm_vision_translation', false);
-                    }
                     break;
                 case 'googleApiKey':
                     logic.setHasGoogleApiKey(!!value);
                     break;
-                case 'llmVisionTranslation':
-                    logic.setVisionTranslationEnabled(value);
+                case 'visionMode':
+                    logic.setVisionMode(value);
                     break;
             }
 
@@ -317,7 +310,6 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
             const result = await call<boolean>('set_setting', backendKey, value);
 
             if (result) {
-                // if (label) logic.notify(`${label} updated successfully`);
                 return true;
             } else {
                 logic.notify(`Failed to update ${label || key}`, 2000);

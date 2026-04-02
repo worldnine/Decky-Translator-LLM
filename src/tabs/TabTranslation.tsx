@@ -464,6 +464,16 @@ export const TabTranslation: VFC = () => {
                             </Field>
                         </PanelSectionRow>
                         <PanelSectionRow>
+                            <Field label="System Prompt" childrenContainerWidth="max">
+                                <TextField
+                                    value={settings.llmSystemPrompt}
+                                    onChange={(e) => updateSetting('llmSystemPrompt', e.target.value, 'LLM System Prompt')}
+                                    bShowClearAction={true}
+                                    description="Additional instructions for the LLM translator (appended to default prompt)"
+                                />
+                            </Field>
+                        </PanelSectionRow>
+                        <PanelSectionRow>
                             <ToggleField
                                 label="Disable Thinking Mode"
                                 checked={settings.llmDisableThinking}
@@ -472,74 +482,59 @@ export const TabTranslation: VFC = () => {
                             />
                         </PanelSectionRow>
                         <PanelSectionRow>
-                            <ToggleField
-                                label="Parallel API Calls"
-                                checked={settings.llmParallel}
-                                onChange={(value) => updateSetting('llmParallel', value, 'LLM Parallel')}
-                                description="Run LLM API calls in parallel when multiple requests are needed (batch fallback, image translation). Faster with cloud APIs. Disable for local servers like Ollama."
-                            />
-                        </PanelSectionRow>
-                        <PanelSectionRow>
-                            <ToggleField
-                                label="Vision Translation (OCR Bypass)"
-                                checked={settings.llmVisionTranslation}
-                                onChange={async (value) => {
-                                    if (value) {
-                                        // preflight検証を実行
-                                        const result = await call<{ok: boolean, message: string}>('preflight_vision_check');
-                                        if (!result?.ok) {
-                                            // 失敗 → エラー通知、トグルは変更しない
-                                            // TODO: logic.notify が使えないのでconsoleに出力
-                                            console.error('Vision preflight failed:', result?.message);
-                                            return;
+                            <Field label="Vision Mode" childrenContainerWidth="max">
+                                <Dropdown
+                                    selectedOption={settings.visionMode}
+                                    rgOptions={[
+                                        { label: "Off", data: "off" },
+                                        { label: "Assist (OCR + Image verification)", data: "assist" },
+                                        { label: "Direct (OCR Bypass)", data: "direct" },
+                                    ]}
+                                    onChange={async (option: DropdownItem) => {
+                                        const newMode = option.data as string;
+                                        if (newMode === 'direct') {
+                                            // direct選択時はpreflight検証を実行
+                                            const result = await call<{ok: boolean, message: string}>('preflight_vision_check');
+                                            if (!result?.ok) {
+                                                console.error('Vision preflight failed:', result?.message);
+                                                return;
+                                            }
                                         }
-                                    }
-                                    updateSetting('llmVisionTranslation', value, 'Vision Translation');
-                                    // Vision TranslationとImage-Assistedは排他
-                                    if (value && settings.llmImageRerecognition) {
-                                        updateSetting('llmImageRerecognition', false, 'LLM Image Rerecognition');
-                                    }
-                                }}
-                                description="Send screenshot directly to LLM for text detection and translation in one call. Skips OCR entirely. Requires Vision-capable model with JSON output (Gemini, GPT-4o, etc)."
-                            />
+                                        updateSetting('visionMode', newMode, 'Vision Mode');
+                                    }}
+                                />
+                            </Field>
                         </PanelSectionRow>
-                        {!settings.llmVisionTranslation && (
-                            <>
-                                <PanelSectionRow>
-                                    <ToggleField
-                                        label="Image-Assisted Translation"
-                                        checked={settings.llmImageRerecognition}
-                                        onChange={(value) => updateSetting('llmImageRerecognition', value, 'LLM Image Rerecognition')}
-                                        description={
-                                            settings.ocrProvider === 'ocrspace'
-                                                ? "Not available with OCR.space (no per-line confidence scores)"
-                                                : "Send cropped images of low-confidence OCR regions to LLM for better recognition. Uses Vision API — may increase latency and cost."
-                                        }
-                                        disabled={settings.ocrProvider === 'ocrspace'}
-                                    />
-                                </PanelSectionRow>
-                            </>
+                        {settings.visionMode !== 'off' && (
+                            <PanelSectionRow>
+                                <ToggleField
+                                    label="Parallel API Calls"
+                                    checked={settings.visionParallel}
+                                    onChange={(value) => updateSetting('visionParallel', value, 'Vision Parallel')}
+                                    description="Run Vision API calls in parallel. Faster with cloud APIs. Disable for local servers like Ollama."
+                                />
+                            </PanelSectionRow>
                         )}
-                        {settings.llmImageRerecognition && !settings.llmVisionTranslation && settings.ocrProvider !== 'ocrspace' && (
+                        {settings.visionMode === 'assist' && settings.ocrProvider !== 'ocrspace' && (
                             <>
                                 <PanelSectionRow>
                                     <ToggleField
                                         label="Send All Regions as Images"
-                                        checked={settings.llmImageSendAll}
-                                        onChange={(value) => updateSetting('llmImageSendAll', value, 'LLM Image Send All')}
+                                        checked={settings.visionAssistSendAll}
+                                        onChange={(value) => updateSetting('visionAssistSendAll', value, 'Vision Assist Send All')}
                                         description="Send all text regions as images regardless of confidence. Slower but most accurate."
                                     />
                                 </PanelSectionRow>
-                                {!settings.llmImageSendAll && (
+                                {!settings.visionAssistSendAll && (
                                     <PanelSectionRow>
                                         <SliderField
                                             label="Confidence Threshold"
-                                            value={settings.llmImageConfidenceThreshold}
+                                            value={settings.visionAssistConfidenceThreshold}
                                             min={0.5}
                                             max={1.0}
                                             step={0.05}
                                             showValue={true}
-                                            onChange={(value) => updateSetting('llmImageConfidenceThreshold', value, 'LLM Image Confidence Threshold')}
+                                            onChange={(value) => updateSetting('visionAssistConfidenceThreshold', value, 'Vision Assist Confidence Threshold')}
                                             description="Regions below this OCR confidence will be sent as images to the LLM"
                                         />
                                     </PanelSectionRow>

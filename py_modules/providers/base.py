@@ -22,6 +22,11 @@ class RateLimitError(Exception):
     pass
 
 
+class ConfigurationError(Exception):
+    """設定が不足または不正な場合に送出する。ApiKeyErrorとは区別する。"""
+    pass
+
+
 class ProviderType(Enum):
     """Enum for available provider types."""
     GOOGLE = "google"           # Google Cloud (requires API key)
