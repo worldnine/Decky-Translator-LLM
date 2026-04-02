@@ -360,8 +360,18 @@ export class GameTranslatorLogic {
         try {
             this.isProcessing = true;
 
+            // ゲーム別プロンプトを適用（LLMプロバイダー使用時のみ）
+            const mainApp = Router.MainRunningApp;
+            if (mainApp?.appid && this.translationProvider === 'llm') {
+                try {
+                    await call('ensure_game_prompt_file', Number(mainApp.appid), mainApp.display_name || "");
+                } catch (e) {
+                    logger.warn('Translator', 'Failed to apply game prompt', e);
+                }
+            }
+
             // Take screenshot FIRST while screen is clean (no overlay visible)
-            const appName = Router.MainRunningApp?.display_name || "";
+            const appName = mainApp?.display_name || "";
             logger.info('Translator', `Taking new screenshot for: ${appName}`);
             const result = await call<ScreenshotResponse>('take_screenshot', appName);
 
