@@ -231,6 +231,21 @@ class TestPreflightVisionCheck:
         assert result["ok"] is False
         assert "設定" in result["message"]
 
+    def test_offモード_mode引数でバイパス(self):
+        """mode引数を指定すると、_vision_mode=offでも一時Providerでpreflight検証できる"""
+        import asyncio
+        pm = ProviderManager()
+        pm.configure_text_llm(base_url="http://localhost", model="test")
+        pm.configure_vision(mode="off")
+        # mode引数なしだとFalse（offなので）
+        result_without = asyncio.get_event_loop().run_until_complete(pm.preflight_vision_check())
+        assert result_without["ok"] is False
+        # mode引数ありだとProviderは生成される（APIは叩かないがis_available()はTrue）
+        result_with = asyncio.get_event_loop().run_until_complete(pm.preflight_vision_check(mode="direct"))
+        # preflight_check自体はAPIを叩くので接続エラーになるが、
+        # "Vision Providerが設定されていません" にはならない
+        assert "Vision Providerが設定されていません" not in result_with.get("message", "")
+
     def test_未設定provider(self):
         import asyncio
         pm = ProviderManager()
