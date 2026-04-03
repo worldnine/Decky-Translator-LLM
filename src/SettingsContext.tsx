@@ -36,8 +36,6 @@ export interface Settings {
     visionLlmModel: string;
     visionLlmDisableThinking: boolean;
     visionLlmParallel: boolean;
-    // 共通プロンプト（後のコミットでファイルベースに移行予定）
-    llmSystemPrompt: string;
     // Vision設定（OCR/Translationとは独立）
     visionMode: 'off' | 'assist' | 'direct';
     visionAssistSendAll: boolean;
@@ -86,7 +84,6 @@ const initialSettings: Settings = {
     visionLlmModel: "",
     visionLlmDisableThinking: true,
     visionLlmParallel: true,
-    llmSystemPrompt: "",
     visionMode: "off",
     visionAssistSendAll: false,
     visionAssistConfidenceThreshold: 0.95,
@@ -168,7 +165,6 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                     visionLlmModel: serverSettings.vision_llm_model || "",
                     visionLlmDisableThinking: serverSettings.vision_llm_disable_thinking ?? true,
                     visionLlmParallel: serverSettings.vision_llm_parallel ?? true,
-                    llmSystemPrompt: serverSettings.llm_system_prompt || "",
                     visionMode: serverSettings.vision_mode ?? "off",
                     visionAssistSendAll: serverSettings.vision_assist_send_all ?? false,
                     visionAssistConfidenceThreshold: serverSettings.vision_assist_confidence_threshold ?? 0.95,
@@ -253,7 +249,6 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                 visionLlmModel: 'vision_llm_model',
                 visionLlmDisableThinking: 'vision_llm_disable_thinking',
                 visionLlmParallel: 'vision_llm_parallel',
-                llmSystemPrompt: 'llm_system_prompt',
                 visionMode: 'vision_mode',
                 visionAssistSendAll: 'vision_assist_send_all',
                 visionAssistConfidenceThreshold: 'vision_assist_confidence_threshold',

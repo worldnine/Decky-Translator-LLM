@@ -176,15 +176,13 @@ class GeminiVisionProvider(VisionProvider):
         src_name = "the detected language" if source_lang == "auto" else _get_language_name(source_lang)
 
         # Vision Direct固定プロンプト: 役割定義・出力契約・JSON schema契約のみ
-        # 「画面端UIは無視」「数字は無視」等のゲーム依存指示は共通/ゲーム別プロンプトに入れる
+        # テキストのグルーピング方針等は共通/ゲーム別Visionプロンプト（vision-common.txt）に入れる
         system_prompt = (
             "You are a game screen text detector and translator. "
             "You will receive a game screenshot. "
             f"Find all text, translate from {src_name} to {tgt_name}. "
             "Do NOT add information that is not present in the original. "
-            "Group text by semantic meaning: merge consecutive lines that form a paragraph or sentence into ONE region. "
-            "Menu items, buttons, labels, and standalone UI elements must each be a SEPARATE region. "
-            "The rect must cover the entire grouped text area. "
+            "The rect must cover the entire text area for each region. "
             "Use normalized coordinates 0-1000 for rect (0=top-left, 1000=bottom-right). "
             "Return JSON only."
         )

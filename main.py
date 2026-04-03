@@ -892,9 +892,6 @@ class Plugin:
     _vision_llm_model: str = ""
     _vision_llm_disable_thinking: bool = True
     _vision_llm_parallel: bool = True
-    # 共通プロンプト（後のコミットでファイルベースに移行予定）
-    _llm_system_prompt: str = ""
-
     # Vision設定（OCR/Translationとは独立）
     _vision_mode: str = "off"  # "off", "assist", "direct"
     _vision_assist_confidence_threshold: float = 0.95
@@ -1045,9 +1042,8 @@ class Plugin:
             elif key == "llm_parallel":
                 return await self.set_setting("text_llm_parallel", value)
             elif key == "llm_system_prompt":
-                self._llm_system_prompt = value
-                if self._provider_manager:
-                    self._provider_manager.configure_text_llm(system_prompt=value)
+                # 旧キー: ファイルベース(text-common.txt)に移行済み。無視する。
+                logger.warning("llm_system_prompt は廃止されました。Prompts タブから text-common.txt を編集してください。")
             # Vision LLM設定
             elif key == "vision_llm_base_url":
                 self._vision_llm_base_url = value
@@ -1126,7 +1122,6 @@ class Plugin:
 
     def _apply_common_text_prompt(self, prompt: str):
         """共通Text プロンプトをText LLMに適用する"""
-        self._llm_system_prompt = prompt
         if self._provider_manager:
             self._provider_manager.configure_text_llm(system_prompt=prompt)
 
@@ -1407,8 +1402,6 @@ class Plugin:
                 "vision_llm_model": self._vision_llm_model,
                 "vision_llm_disable_thinking": self._vision_llm_disable_thinking,
                 "vision_llm_parallel": self._vision_llm_parallel,
-                # 共通プロンプト
-                "llm_system_prompt": self._llm_system_prompt,
                 # Vision設定
                 "vision_mode": self._vision_mode,
                 "vision_assist_confidence_threshold": self._vision_assist_confidence_threshold,
@@ -1879,13 +1872,13 @@ class Plugin:
             logger.error(traceback.format_exc())
             return None
 
-    async def preflight_vision_check(self):
+    async def preflight_vision_check(self, mode: str = None):
         """Vision Translationの事前検証RPC。Vision+JSON対応のみ確認。
-        coordinate_modeは初回翻訳時に実測する。"""
+        mode引数でoff→direct等の遷移前検証を可能にする。"""
         try:
             if not self._provider_manager:
                 return {"ok": False, "message": "Provider manager not initialized"}
-            return await self._provider_manager.preflight_vision_check()
+            return await self._provider_manager.preflight_vision_check(mode=mode)
         except Exception as e:
             logger.error(f"Vision preflight error: {e}")
             logger.error(traceback.format_exc())
@@ -2190,9 +2183,6 @@ class Plugin:
                 self._settings.get_setting("vision_parallel",
                     self._settings.get_setting("llm_parallel", True))
             )
-            # 共通プロンプト
-            self._llm_system_prompt = self._settings.get_setting("llm_system_prompt", "")
-
             # Vision設定を読み込み（旧設定からの自動マイグレーション付き）
             saved_vision_mode = self._settings.get_setting("vision_mode", None)
             if saved_vision_mode is not None:
@@ -2241,7 +2231,6 @@ class Plugin:
                     base_url=self._text_llm_base_url,
                     api_key=self._text_llm_api_key,
                     model=self._text_llm_model,
-                    system_prompt=self._llm_system_prompt,
                     disable_thinking=self._text_llm_disable_thinking,
                     parallel=self._text_llm_parallel,
                 )
@@ -2262,11 +2251,35 @@ class Plugin:
             # 共通プロンプトファイルを読み込んで適用
             prompts_dir = self._get_prompts_dir()
             text_common_path = os.path.join(prompts_dir, "text-common.txt")
+
+            # 旧 llm_system_prompt からの移行: ファイルが存在しない場合のみ
+            old_system_prompt = self._settings.get_setting("llm_system_prompt", "")
+            if not os.path.exists(text_common_path) and old_system_prompt:
+                os.makedirs(prompts_dir, exist_ok=True)
+                with open(text_common_path, 'w', encoding='utf-8') as f:
+                    f.write(old_system_prompt)
+                logger.info("旧 llm_system_prompt を text-common.txt に移行")
+
             if os.path.exists(text_common_path):
                 with open(text_common_path, 'r', encoding='utf-8-sig') as f:
                     self._apply_common_text_prompt(f.read().strip())
                 logger.info("共通Text プロンプトを読み込み")
+
             vision_common_path = os.path.join(prompts_dir, "vision-common.txt")
+
+            # vision-common.txt が存在しない場合、デフォルト内容で生成
+            if not os.path.exists(vision_common_path) and self._vision_mode != "off":
+                os.makedirs(prompts_dir, exist_ok=True)
+                default_vision_prompt = (
+                    "Group text by semantic meaning: merge consecutive lines "
+                    "that form a paragraph or sentence into ONE region.\n"
+                    "Menu items, buttons, labels, and standalone UI elements "
+                    "must each be a SEPARATE region."
+                )
+                with open(vision_common_path, 'w', encoding='utf-8') as f:
+                    f.write(default_vision_prompt)
+                logger.info("デフォルト vision-common.txt を生成")
+
             if os.path.exists(vision_common_path):
                 with open(vision_common_path, 'r', encoding='utf-8-sig') as f:
                     self._apply_common_vision_prompt(f.read().strip())

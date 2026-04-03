@@ -493,7 +493,7 @@ export const TabTranslation: VFC = () => {
                                         const newMode = option.data as string;
                                         if (newMode === 'direct') {
                                             // direct選択時はpreflight検証を実行
-                                            const result = await call<{ok: boolean, message: string}>('preflight_vision_check');
+                                            const result = await call<{ok: boolean, message: string}>('preflight_vision_check', newMode);
                                             if (!result?.ok) {
                                                 console.error('Vision preflight failed:', result?.message);
                                                 return;

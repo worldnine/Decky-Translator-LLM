@@ -324,7 +324,12 @@ class ProviderManager:
 
     def get_vision_provider(self) -> Optional[GeminiVisionProvider]:
         """Vision Providerを取得する。vision_mode=="off"ならNoneを返す。
-        Vision LLM専用設定が空の場合、Text LLM設定をフォールバックとして使用する。"""
+
+        Vision LLM専用設定 (vision_llm_base_url, vision_llm_api_key, vision_llm_model) が
+        空の場合、Text LLM設定 (text_llm_*) をフォールバックとして使用する。
+        これにより、Vision専用サーバーを持たないユーザーでもText LLMと同一のサーバーで
+        Vision機能を利用できる。
+        """
         if self._vision_mode == "off":
             return None
 
@@ -735,9 +740,23 @@ json.dump({{"b64": b64, "w": w, "h": h}}, sys.stdout)
             logger.error(f"画像圧縮エラー: {e}")
             return None
 
-    async def preflight_vision_check(self) -> dict:
-        """Vision + JSON構造化出力対応を検証する（非同期）。"""
-        vision_provider = self.get_vision_provider()
+    def _create_vision_provider_for_preflight(self) -> Optional[GeminiVisionProvider]:
+        """preflight用にVision Providerを一時生成する（キャッシュしない）。
+        現在の_vision_modeに関係なく、設定があれば生成する。"""
+        return GeminiVisionProvider(
+            base_url=self._vision_llm_base_url or self._text_llm_base_url,
+            api_key=self._vision_llm_api_key or self._text_llm_api_key,
+            model=self._vision_llm_model or self._text_llm_model,
+            disable_thinking=self._vision_llm_disable_thinking,
+        )
+
+    async def preflight_vision_check(self, mode: str = None) -> dict:
+        """Vision + JSON構造化出力対応を検証する（非同期）。
+        mode引数を指定すると、現在の_vision_modeに関係なくpreflight検証を実行する。"""
+        if mode:
+            vision_provider = self._create_vision_provider_for_preflight()
+        else:
+            vision_provider = self.get_vision_provider()
         if not vision_provider:
             return {"ok": False, "message": "Vision Providerが設定されていません"}
         if not vision_provider.is_available():
