@@ -496,10 +496,37 @@ export const TabTranslation: VFC = () => {
                             ]}
                             onChange={async (option: any) => {
                                 const newMode = option.data as string;
+                                if (newMode === 'direct' || newMode === 'assist') {
+                                    // Vision LLM 設定チェック（専用設定またはText LLMフォールバック）
+                                    const hasVisionLlm = settings.visionLlmBaseUrl && settings.visionLlmModel;
+                                    const hasTextLlmFallback = settings.textLlmBaseUrl && settings.textLlmModel;
+                                    if (!hasVisionLlm && !hasTextLlmFallback) {
+                                        showModal(
+                                            <ModalRoot>
+                                                <div style={{ padding: "20px" }}>
+                                                    <h2>Vision LLM not configured</h2>
+                                                    <p style={{ color: "#aaa", marginTop: "10px" }}>
+                                                        Please set Vision LLM Base URL and Model, or configure Text LLM settings as fallback.
+                                                    </p>
+                                                    <DialogButton onClick={() => {}} style={{ marginTop: "15px" }}>OK</DialogButton>
+                                                </div>
+                                            </ModalRoot>
+                                        );
+                                        return;
+                                    }
+                                }
                                 if (newMode === 'direct') {
                                     const result = await call<{ok: boolean, message: string}>('preflight_vision_check', newMode);
                                     if (!result?.ok) {
-                                        console.error('Vision preflight failed:', result?.message);
+                                        showModal(
+                                            <ModalRoot>
+                                                <div style={{ padding: "20px" }}>
+                                                    <h2>Vision preflight failed</h2>
+                                                    <p style={{ color: "#aaa", marginTop: "10px" }}>{result?.message || "Unknown error"}</p>
+                                                    <DialogButton onClick={() => {}} style={{ marginTop: "15px" }}>OK</DialogButton>
+                                                </div>
+                                            </ModalRoot>
+                                        );
                                         return;
                                     }
                                 }

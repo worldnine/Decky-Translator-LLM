@@ -143,29 +143,45 @@ export const TabPrompts: VFC = () => {
         }
     }, [settings.translationProvider, settings.visionMode]);
 
-    // 保存ハンドラ
-    const saveCommonText = () => {
+    // 保存ハンドラ（失敗時は巻き戻し + console.error）
+    const saveCommonText = async () => {
         if (commonTextContent !== commonTextSaved) {
-            call('save_common_text_prompt', commonTextContent);
-            setCommonTextSaved(commonTextContent);
+            const prev = commonTextSaved;
+            try {
+                const ok = await call<boolean>('save_common_text_prompt', commonTextContent);
+                if (ok) { setCommonTextSaved(commonTextContent); }
+                else { setCommonTextContent(prev); }
+            } catch { setCommonTextContent(prev); }
         }
     };
-    const saveCommonVision = () => {
+    const saveCommonVision = async () => {
         if (commonVisionContent !== commonVisionSaved) {
-            call('save_common_vision_prompt', commonVisionContent);
-            setCommonVisionSaved(commonVisionContent);
+            const prev = commonVisionSaved;
+            try {
+                const ok = await call<boolean>('save_common_vision_prompt', commonVisionContent);
+                if (ok) { setCommonVisionSaved(commonVisionContent); }
+                else { setCommonVisionContent(prev); }
+            } catch { setCommonVisionContent(prev); }
         }
     };
-    const saveGameText = () => {
+    const saveGameText = async () => {
         if (gameInfo && gameTextContent !== gameTextSaved) {
-            call('save_game_text_prompt', gameInfo.appId, gameTextContent);
-            setGameTextSaved(gameTextContent);
+            const prev = gameTextSaved;
+            try {
+                const ok = await call<boolean>('save_game_text_prompt', gameInfo.appId, gameTextContent);
+                if (ok) { setGameTextSaved(gameTextContent); }
+                else { setGameTextContent(prev); }
+            } catch { setGameTextContent(prev); }
         }
     };
-    const saveGameVision = () => {
+    const saveGameVision = async () => {
         if (gameInfo && gameVisionContent !== gameVisionSaved) {
-            call('save_game_vision_prompt', gameInfo.appId, gameVisionContent);
-            setGameVisionSaved(gameVisionContent);
+            const prev = gameVisionSaved;
+            try {
+                const ok = await call<boolean>('save_game_vision_prompt', gameInfo.appId, gameVisionContent);
+                if (ok) { setGameVisionSaved(gameVisionContent); }
+                else { setGameVisionContent(prev); }
+            } catch { setGameVisionContent(prev); }
         }
     };
 

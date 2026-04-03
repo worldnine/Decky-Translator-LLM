@@ -1075,7 +1075,7 @@ class Plugin:
                     self._provider_manager.configure_vision(mode=value)
                 # off → assist/direct 切り替え時にデフォルト vision-common.txt を生成
                 if value != "off":
-                    self._ensure_default_vision_common_prompt()
+                    self._ensure_vision_common_prompt_file()
             elif key == "vision_assist_confidence_threshold":
                 self._vision_assist_confidence_threshold = value
                 if self._provider_manager:
@@ -1095,25 +1095,22 @@ class Plugin:
 
     # プロンプトファイル機能
 
-    _DEFAULT_VISION_COMMON_PROMPT = (
-        "Group text by semantic meaning: merge consecutive lines "
-        "that form a paragraph or sentence into ONE region.\n"
-        "Menu items, buttons, labels, and standalone UI elements "
-        "must each be a SEPARATE region."
-    )
-
-    def _ensure_default_vision_common_prompt(self):
-        """vision-common.txt が存在しない場合、デフォルト内容で生成して適用する"""
+    def _ensure_vision_common_prompt_file(self):
+        """vision-common.txt が存在しない場合、空ファイルを生成する。
+        ファイルが存在すればその内容を読み込んで適用する。
+        暗黙の意味論注入は行わない — ユーザーが明示的に書いた内容のみ適用。"""
         prompts_dir = self._get_prompts_dir()
         vision_common_path = os.path.join(prompts_dir, "vision-common.txt")
         if not os.path.exists(vision_common_path):
             os.makedirs(prompts_dir, exist_ok=True)
             with open(vision_common_path, 'w', encoding='utf-8') as f:
-                f.write(self._DEFAULT_VISION_COMMON_PROMPT)
-            logger.info("デフォルト vision-common.txt を生成")
-        # ファイルから読み込んで適用
+                f.write("")
+            logger.info("vision-common.txt を生成（空）")
+        # ファイルから読み込んで適用（空ならプロンプト注入なし）
         with open(vision_common_path, 'r', encoding='utf-8-sig') as f:
-            self._apply_common_vision_prompt(f.read().strip())
+            content = f.read().strip()
+            if content:
+                self._apply_common_vision_prompt(content)
 
     def _get_prompts_dir(self):
         """共通プロンプトファイルの保存ディレクトリを返す"""
@@ -2321,7 +2318,7 @@ class Plugin:
 
             # vision-common.txt のデフォルト生成＋読み込み
             if self._vision_mode != "off":
-                self._ensure_default_vision_common_prompt()
+                self._ensure_vision_common_prompt_file()
 
             # Load and apply RapidOCR-specific settings
             if self._settings.get_setting("custom_recognition_settings", False):

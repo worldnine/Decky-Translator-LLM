@@ -56,27 +56,20 @@ class TestLlmSystemPromptMigration:
 class TestDefaultVisionCommonCreation:
     """デフォルト vision-common.txt 生成のテスト。"""
 
-    def test_Vision有効時にデフォルト生成(self, tmp_path):
-        """vision_mode != off かつ vision-common.txt が存在しない場合、デフォルト内容で生成"""
+    def test_Vision有効時に空ファイル生成(self, tmp_path):
+        """vision_mode != off かつ vision-common.txt が存在しない場合、空ファイルを生成"""
         prompts_dir = tmp_path / "decky-translator-prompts"
         vision_common_path = prompts_dir / "vision-common.txt"
         vision_mode = "direct"
 
-        # 生成ロジック（main.py と同等）
+        # 生成ロジック（main.py と同等 — 暗黙の意味論注入なし）
         if not vision_common_path.exists() and vision_mode != "off":
             prompts_dir.mkdir(parents=True, exist_ok=True)
-            default_content = (
-                "Group text by semantic meaning: merge consecutive lines "
-                "that form a paragraph or sentence into ONE region.\n"
-                "Menu items, buttons, labels, and standalone UI elements "
-                "must each be a SEPARATE region."
-            )
-            vision_common_path.write_text(default_content, encoding='utf-8')
+            vision_common_path.write_text("", encoding='utf-8')
 
         assert vision_common_path.exists()
         content = vision_common_path.read_text(encoding='utf-8')
-        assert "Group text by semantic meaning" in content
-        assert "SEPARATE region" in content
+        assert content == ""  # 暗黙の内容が注入されていないこと
 
     def test_Vision無効時は生成しない(self, tmp_path):
         """vision_mode == off の場合はデフォルトファイルを生成しない"""
