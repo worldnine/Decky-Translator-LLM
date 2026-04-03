@@ -494,7 +494,7 @@ export const TabTranslation: VFC = () => {
                                 { label: "Assist (OCR + Image verification)", data: "assist" },
                                 { label: "Direct (OCR Bypass)", data: "direct" },
                             ]}
-                            onChange={async (option: DropdownItem) => {
+                            onChange={async (option: any) => {
                                 const newMode = option.data as string;
                                 if (newMode === 'direct') {
                                     const result = await call<{ok: boolean, message: string}>('preflight_vision_check', newMode);

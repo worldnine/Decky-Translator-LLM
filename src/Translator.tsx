@@ -350,11 +350,15 @@ export class GameTranslatorLogic {
         }
 
         // Check if API key is required but missing BEFORE starting the process
-        const apiKeyCheck = this.requiresApiKeyButMissing();
-        if (apiKeyCheck.missing) {
-            logger.warn('Translator', `Cannot start translation: ${apiKeyCheck.message}`);
-            this.notify(apiKeyCheck.message, 3000, "Please configure your Google Cloud API key in settings or switch to a free provider.");
-            return;
+        // Vision Direct モードでは OCR/Translation プロバイダーをバイパスするため、
+        // Google API キーチェックをスキップする
+        if (this.visionMode !== 'direct') {
+            const apiKeyCheck = this.requiresApiKeyButMissing();
+            if (apiKeyCheck.missing) {
+                logger.warn('Translator', `Cannot start translation: ${apiKeyCheck.message}`);
+                this.notify(apiKeyCheck.message, 3000, "Please configure your Google Cloud API key in settings or switch to a free provider.");
+                return;
+            }
         }
 
         try {

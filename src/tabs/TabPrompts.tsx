@@ -13,7 +13,7 @@ import { VFC, useState, useEffect } from "react";
 import { useSettings } from "../SettingsContext";
 
 // textarea共通スタイル
-const textareaStyle: React.CSSProperties = {
+const textareaStyle = {
     width: "100%",
     backgroundColor: "#3d4450",
     color: "#dcdedf",
