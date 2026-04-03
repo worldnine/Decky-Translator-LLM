@@ -1073,6 +1073,9 @@ class Plugin:
                 self._vision_mode = value
                 if self._provider_manager:
                     self._provider_manager.configure_vision(mode=value)
+                # off → assist/direct 切り替え時にデフォルト vision-common.txt を生成
+                if value != "off":
+                    self._ensure_default_vision_common_prompt()
             elif key == "vision_assist_confidence_threshold":
                 self._vision_assist_confidence_threshold = value
                 if self._provider_manager:
@@ -1091,6 +1094,26 @@ class Plugin:
             return False
 
     # プロンプトファイル機能
+
+    _DEFAULT_VISION_COMMON_PROMPT = (
+        "Group text by semantic meaning: merge consecutive lines "
+        "that form a paragraph or sentence into ONE region.\n"
+        "Menu items, buttons, labels, and standalone UI elements "
+        "must each be a SEPARATE region."
+    )
+
+    def _ensure_default_vision_common_prompt(self):
+        """vision-common.txt が存在しない場合、デフォルト内容で生成して適用する"""
+        prompts_dir = self._get_prompts_dir()
+        vision_common_path = os.path.join(prompts_dir, "vision-common.txt")
+        if not os.path.exists(vision_common_path):
+            os.makedirs(prompts_dir, exist_ok=True)
+            with open(vision_common_path, 'w', encoding='utf-8') as f:
+                f.write(self._DEFAULT_VISION_COMMON_PROMPT)
+            logger.info("デフォルト vision-common.txt を生成")
+        # ファイルから読み込んで適用
+        with open(vision_common_path, 'r', encoding='utf-8-sig') as f:
+            self._apply_common_vision_prompt(f.read().strip())
 
     def _get_prompts_dir(self):
         """共通プロンプトファイルの保存ディレクトリを返す"""
@@ -1119,6 +1142,19 @@ class Plugin:
         self._current_game_vision_prompt = game_prompt
         if self._provider_manager:
             self._provider_manager.configure_vision(game_prompt=game_prompt)
+
+    def _reload_common_prompts(self):
+        """共通プロンプトファイルを再読み込みして適用する。
+        SSH編集への対応として、翻訳実行前に呼び出す。"""
+        prompts_dir = self._get_prompts_dir()
+        text_path = os.path.join(prompts_dir, "text-common.txt")
+        if os.path.exists(text_path):
+            with open(text_path, 'r', encoding='utf-8-sig') as f:
+                self._apply_common_text_prompt(f.read().strip())
+        vision_path = os.path.join(prompts_dir, "vision-common.txt")
+        if os.path.exists(vision_path):
+            with open(vision_path, 'r', encoding='utf-8-sig') as f:
+                self._apply_common_vision_prompt(f.read().strip())
 
     def _apply_common_text_prompt(self, prompt: str):
         """共通Text プロンプトをText LLMに適用する"""
@@ -1832,6 +1868,8 @@ class Plugin:
 
     async def translate_text(self, text_regions, target_language=None, input_language=None, image_data=None):
         try:
+            # SSH編集対応: 翻訳前に共通プロンプトを再読み込み
+            self._reload_common_prompts()
             if not text_regions:
                 return []
 
@@ -1901,6 +1939,8 @@ class Plugin:
     async def vision_translate(self, image_data, target_language=None, input_language=None):
         """Vision Translation: スクリーンショットから直接テキスト検出+翻訳。OCRバイパス。"""
         try:
+            # SSH編集対応: 翻訳前に共通プロンプトを再読み込み
+            self._reload_common_prompts()
             if not image_data:
                 return {"error": "vision_failed", "message": "No image data"}
 
@@ -2279,25 +2319,9 @@ class Plugin:
                     self._apply_common_text_prompt(f.read().strip())
                 logger.info("共通Text プロンプトを読み込み")
 
-            vision_common_path = os.path.join(prompts_dir, "vision-common.txt")
-
-            # vision-common.txt が存在しない場合、デフォルト内容で生成
-            if not os.path.exists(vision_common_path) and self._vision_mode != "off":
-                os.makedirs(prompts_dir, exist_ok=True)
-                default_vision_prompt = (
-                    "Group text by semantic meaning: merge consecutive lines "
-                    "that form a paragraph or sentence into ONE region.\n"
-                    "Menu items, buttons, labels, and standalone UI elements "
-                    "must each be a SEPARATE region."
-                )
-                with open(vision_common_path, 'w', encoding='utf-8') as f:
-                    f.write(default_vision_prompt)
-                logger.info("デフォルト vision-common.txt を生成")
-
-            if os.path.exists(vision_common_path):
-                with open(vision_common_path, 'r', encoding='utf-8-sig') as f:
-                    self._apply_common_vision_prompt(f.read().strip())
-                logger.info("共通Vision プロンプトを読み込み")
+            # vision-common.txt のデフォルト生成＋読み込み
+            if self._vision_mode != "off":
+                self._ensure_default_vision_common_prompt()
 
             # Load and apply RapidOCR-specific settings
             if self._settings.get_setting("custom_recognition_settings", False):

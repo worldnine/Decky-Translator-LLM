@@ -397,27 +397,34 @@ export class GameTranslatorLogic {
                     if (this.visionMode === 'direct') {
                         this.imageState.updateProcessingStep("Translating (Vision)");
                         const visionResult = await this.textTranslator.visionTranslate(result.base64);
-                        if (visionResult && visionResult.length > 0) {
-                            logger.info('Translator', `Vision translation complete: ${visionResult.length} regions`);
-                            let translatedRegions = visionResult;
-                            if (this.hideIdenticalTranslations) {
-                                const before = translatedRegions.length;
-                                translatedRegions = translatedRegions.filter(r =>
-                                    r.translatedText.trim().toLowerCase() !== r.text.trim().toLowerCase()
-                                );
-                                if (translatedRegions.length < before) {
-                                    logger.info('Translator', `Filtered ${before - translatedRegions.length} identical translations`);
-                                }
-                            }
-                            this.imageState.showTranslatedImage(result.base64, translatedRegions);
-                            // Vision direct成功時は一時スクリーンショットを削除（OCRフローを経由しないため）
+                        if (visionResult) {
+                            // 一時スクリーンショットを削除（OCRフローを経由しないため）
                             if (result.path) {
                                 call('delete_screenshot', result.path).catch(() => {});
                             }
+                            if (visionResult.length > 0) {
+                                logger.info('Translator', `Vision translation complete: ${visionResult.length} regions`);
+                                let translatedRegions = visionResult;
+                                if (this.hideIdenticalTranslations) {
+                                    const before = translatedRegions.length;
+                                    translatedRegions = translatedRegions.filter(r =>
+                                        r.translatedText.trim().toLowerCase() !== r.text.trim().toLowerCase()
+                                    );
+                                    if (translatedRegions.length < before) {
+                                        logger.info('Translator', `Filtered ${before - translatedRegions.length} identical translations`);
+                                    }
+                                }
+                                this.imageState.showTranslatedImage(result.base64, translatedRegions);
+                            } else {
+                                // 空配列 = テキストなし（正常結果）
+                                logger.info('Translator', 'Vision translation: no text found');
+                                this.imageState.updateProcessingStep("No text found");
+                                setTimeout(() => { this.imageState.hideImage(); }, 2000);
+                            }
                             return;
                         }
-                        // Vision失敗 → 従来のOCRフローにフォールバック
-                        logger.warn('Translator', 'Vision translation returned no results, falling back to OCR');
+                        // visionResult === null → Vision失敗、OCRフローにフォールバック
+                        logger.warn('Translator', 'Vision translation failed, falling back to OCR');
                     }
 
                     // OCRフロー
