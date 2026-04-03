@@ -111,15 +111,17 @@ class TestPreflightVisionCheck:
     """preflight_vision_check() のテスト。"""
 
     def test_offモード(self):
+        import asyncio
         pm = ProviderManager()
         pm.configure_vision(mode="off")
-        result = pm.preflight_vision_check()
+        result = asyncio.get_event_loop().run_until_complete(pm.preflight_vision_check())
         assert result["ok"] is False
         assert "設定" in result["message"]
 
     def test_未設定provider(self):
+        import asyncio
         pm = ProviderManager()
         pm.configure_vision(mode="direct")
         # LLM設定もVision設定もない → is_available() == False
-        result = pm.preflight_vision_check()
+        result = asyncio.get_event_loop().run_until_complete(pm.preflight_vision_check())
         assert result["ok"] is False

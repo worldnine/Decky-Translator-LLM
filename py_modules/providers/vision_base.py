@@ -67,7 +67,7 @@ class VisionProvider(ABC):
         pass
 
     @abstractmethod
-    def preflight_check(self) -> tuple:
+    async def preflight_check(self) -> tuple:
         """Vision + JSON構造化出力の対応を事前検証する。
 
         Returns:

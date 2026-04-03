@@ -886,6 +886,7 @@ class Plugin:
     _llm_model: str = ""
     _llm_system_prompt: str = ""
     _llm_disable_thinking: bool = True
+    _llm_parallel: bool = True  # LLMバッチ翻訳の並列制御（Vision parallelとは独立）
 
     # Vision設定（OCR/Translationとは独立）
     _vision_mode: str = "off"  # "off", "assist", "direct"
@@ -1024,6 +1025,10 @@ class Plugin:
                 self._llm_disable_thinking = value
                 if self._provider_manager:
                     self._provider_manager.configure_llm(disable_thinking=value)
+            elif key == "llm_parallel":
+                self._llm_parallel = value
+                if self._provider_manager:
+                    self._provider_manager.configure_llm(parallel=value)
             # Vision設定
             elif key == "vision_mode":
                 self._vision_mode = value
@@ -1169,6 +1174,7 @@ class Plugin:
                 "llm_model": self._llm_model,
                 "llm_system_prompt": self._llm_system_prompt,
                 "llm_disable_thinking": self._llm_disable_thinking,
+                "llm_parallel": self._llm_parallel,
                 "vision_mode": self._vision_mode,
                 "vision_parallel": self._vision_parallel,
                 "vision_assist_confidence_threshold": self._vision_assist_confidence_threshold,
@@ -1645,7 +1651,7 @@ class Plugin:
         try:
             if not self._provider_manager:
                 return {"ok": False, "message": "Provider manager not initialized"}
-            return self._provider_manager.preflight_vision_check()
+            return await self._provider_manager.preflight_vision_check()
         except Exception as e:
             logger.error(f"Vision preflight error: {e}")
             logger.error(traceback.format_exc())
@@ -1925,6 +1931,7 @@ class Plugin:
             self._llm_model = self._settings.get_setting("llm_model", "")
             self._llm_system_prompt = self._settings.get_setting("llm_system_prompt", "")
             self._llm_disable_thinking = self._settings.get_setting("llm_disable_thinking", True)
+            self._llm_parallel = self._settings.get_setting("llm_parallel", True)
 
             # Vision設定を読み込み（旧設定からの自動マイグレーション付き）
             saved_vision_mode = self._settings.get_setting("vision_mode", None)
@@ -1980,6 +1987,7 @@ class Plugin:
                     model=self._llm_model,
                     system_prompt=self._llm_system_prompt,
                     disable_thinking=self._llm_disable_thinking,
+                    parallel=self._llm_parallel,
                 )
 
             # Vision設定をプロバイダーマネージャーに適用

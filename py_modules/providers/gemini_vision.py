@@ -309,7 +309,7 @@ class GeminiVisionProvider(VisionProvider):
 
     # --- preflight ---
 
-    def preflight_check(self) -> tuple:
+    async def preflight_check(self) -> tuple:
         if not self._client.is_configured():
             return (False, "Vision用のbase_urlとmodelを設定してください")
 
@@ -370,8 +370,9 @@ class GeminiVisionProvider(VisionProvider):
         }
 
         try:
-            result = self._client.call(
-                messages, temperature=0.0,
+            result = await asyncio.to_thread(
+                self._client.call, messages,
+                temperature=0.0,
                 response_format={"type": "json_object", "schema": preflight_schema},
             )
             self._extract_json(result)

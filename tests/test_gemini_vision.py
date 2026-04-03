@@ -110,7 +110,8 @@ class TestGeminiVisionProviderConfig:
         assert "gemini-2.5-flash" in provider.name
 
     def test_preflight未設定(self):
+        import asyncio
         provider = GeminiVisionProvider()
-        ok, msg = provider.preflight_check()
+        ok, msg = asyncio.get_event_loop().run_until_complete(provider.preflight_check())
         assert ok is False
         assert "設定" in msg

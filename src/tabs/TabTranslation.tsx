@@ -475,6 +475,14 @@ export const TabTranslation: VFC = () => {
                         </PanelSectionRow>
                         <PanelSectionRow>
                             <ToggleField
+                                label="Parallel API Calls"
+                                checked={settings.llmParallel}
+                                onChange={(value) => updateSetting('llmParallel', value, 'LLM Parallel')}
+                                description="Run LLM API calls in parallel for batch translation fallback. Disable for local servers like Ollama."
+                            />
+                        </PanelSectionRow>
+                        <PanelSectionRow>
+                            <ToggleField
                                 label="Disable Thinking Mode"
                                 checked={settings.llmDisableThinking}
                                 onChange={(value) => updateSetting('llmDisableThinking', value, 'LLM Disable Thinking')}

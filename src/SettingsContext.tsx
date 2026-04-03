@@ -30,6 +30,7 @@ export interface Settings {
     llmModel: string;
     llmSystemPrompt: string;
     llmDisableThinking: boolean;
+    llmParallel: boolean; // LLMバッチ翻訳の並列制御（Vision parallelとは独立）
     // Vision設定（OCR/Translationとは独立）
     visionMode: 'off' | 'assist' | 'direct';
     visionParallel: boolean;
@@ -74,6 +75,7 @@ const initialSettings: Settings = {
     llmModel: "",
     llmSystemPrompt: "",
     llmDisableThinking: true,
+    llmParallel: true,
     visionMode: "off",
     visionParallel: true,
     visionAssistSendAll: false,
@@ -151,6 +153,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                     llmModel: serverSettings.llm_model || "",
                     llmSystemPrompt: serverSettings.llm_system_prompt || "",
                     llmDisableThinking: serverSettings.llm_disable_thinking ?? true,
+                    llmParallel: serverSettings.llm_parallel ?? true,
                     visionMode: serverSettings.vision_mode ?? "off",
                     visionParallel: serverSettings.vision_parallel ?? true,
                     visionAssistSendAll: serverSettings.vision_assist_send_all ?? false,
@@ -231,6 +234,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                 llmModel: 'llm_model',
                 llmSystemPrompt: 'llm_system_prompt',
                 llmDisableThinking: 'llm_disable_thinking',
+                llmParallel: 'llm_parallel',
                 visionMode: 'vision_mode',
                 visionParallel: 'vision_parallel',
                 visionAssistSendAll: 'vision_assist_send_all',

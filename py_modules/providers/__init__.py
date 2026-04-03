@@ -78,6 +78,7 @@ class ProviderManager:
         self._llm_system_prompt = ""
         self._llm_game_prompt = ""
         self._llm_disable_thinking = True
+        self._llm_parallel = True  # LLMテキスト翻訳のバッチ並列制御（Vision parallelとは独立）
 
         # Vision設定（OCR/Translation とは独立）
         self._vision_mode = "off"  # "off", "assist", "direct"
@@ -99,6 +100,7 @@ class ProviderManager:
         system_prompt: str = None,
         game_prompt: str = None,
         disable_thinking: bool = None,
+        parallel: bool = None,
     ) -> None:
         """LLM翻訳プロバイダーの設定を更新する（テキスト翻訳用）。"""
         if base_url is not None:
@@ -113,6 +115,8 @@ class ProviderManager:
             self._llm_game_prompt = game_prompt
         if disable_thinking is not None:
             self._llm_disable_thinking = disable_thinking
+        if parallel is not None:
+            self._llm_parallel = parallel
 
         # 既存のLLMプロバイダーインスタンスがあれば更新
         llm_provider = self._translation_providers.get(ProviderType.LLM)
@@ -122,6 +126,7 @@ class ProviderManager:
                 model=model, system_prompt=system_prompt,
                 game_prompt=game_prompt,
                 disable_thinking=disable_thinking,
+                parallel=parallel,
             )
 
         # Vision ProviderがLLM設定をフォールバックしている場合も更新
@@ -292,7 +297,7 @@ class ProviderManager:
                     model=self._llm_model,
                     system_prompt=self._llm_system_prompt,
                     disable_thinking=self._llm_disable_thinking,
-                    parallel=self._vision_parallel,
+                    parallel=self._llm_parallel,
                 )
                 if self._llm_game_prompt:
                     provider.configure(game_prompt=self._llm_game_prompt)
@@ -713,15 +718,15 @@ json.dump({{"b64": b64, "w": w, "h": h}}, sys.stdout)
             logger.error(f"画像圧縮エラー: {e}")
             return None
 
-    def preflight_vision_check(self) -> dict:
-        """Vision + JSON構造化出力対応を検証する。"""
+    async def preflight_vision_check(self) -> dict:
+        """Vision + JSON構造化出力対応を検証する（非同期）。"""
         vision_provider = self.get_vision_provider()
         if not vision_provider:
             return {"ok": False, "message": "Vision Providerが設定されていません"}
         if not vision_provider.is_available():
             return {"ok": False, "message": "Vision用のbase_urlとmodelを設定してください"}
 
-        success, message = vision_provider.preflight_check()
+        success, message = await vision_provider.preflight_check()
         return {"ok": success, "message": message}
 
     async def recognize_and_translate(
