@@ -14,20 +14,18 @@ from .llm_api_client import LlmApiClient
 
 logger = logging.getLogger(__name__)
 
-# ベースのシステムプロンプト（常に使用、言語指定を含む）
-# OCR由来のテキストであることを明示し、エラー修正・略語保護・UIラベル対応を指示
-BASE_SYSTEM_PROMPT = (
+# Text翻訳用の固定プロンプト
+# 役割定義・出力契約・hallucination抑制のみ。ゲーム依存の意味論は含めない。
+# 共通/ゲーム別プロンプトで追加指示を注入する。
+#
+# 注入順: Text固定プロンプト → 共通Text プロンプト → ゲーム別Text プロンプト
+TEXT_FIXED_PROMPT = (
     "You are a game text translator. "
     "The input text was captured from a game screen via OCR and may contain "
     "recognition errors, broken words, or artifacts. "
     "Translate from {source_lang} to {target_lang}. "
     "Correct obvious OCR errors based on context, but do NOT add information "
     "that is not present in the original. "
-    "Keep game-specific abbreviations (HP, MP, EXP, ATK, DEF, etc.), "
-    "numbers, and proper nouns unchanged unless you know the standard "
-    "localized form in {target_lang}. "
-    "If the input is a short UI label or menu item, translate it concisely "
-    "as a UI element. "
     "Return ONLY the translation. No explanations, notes, or extra text."
 )
 
@@ -118,28 +116,26 @@ class LlmTranslateProvider(TranslationProvider):
         return self.LANGUAGE_NAMES.get(lang_code, lang_code)
 
     def _build_system_prompt(self, source_lang: str, target_lang: str) -> str:
-        """翻訳用のシステムプロンプトを構築する。
+        """Text翻訳用のシステムプロンプトを構築する。
 
-        ベースプロンプト（言語指定含む）は常に使用し、
-        グローバルカスタムプロンプトとゲーム別プロンプトがあれば追加指示として付加する。
-        両方が設定されている場合は両方を合成する（上書きではない）。
+        注入順: Text固定プロンプト → 共通Text プロンプト → ゲーム別Text プロンプト
         """
         tgt_name = self._get_language_name(target_lang)
         if source_lang == "auto":
             src_name = "the detected language"
         else:
             src_name = self._get_language_name(source_lang)
-        base = BASE_SYSTEM_PROMPT.format(
+        base = TEXT_FIXED_PROMPT.format(
             source_lang=src_name, target_lang=tgt_name
         )
-        # グローバル + ゲーム別プロンプトを合成
+        # 共通Text プロンプト → ゲーム別Text プロンプト
         additional = []
         if self._custom_prompt:
             additional.append(self._custom_prompt)
         if self._game_prompt:
             additional.append(self._game_prompt)
         if additional:
-            return f"{base}\n\nAdditional instructions: {chr(10).join(additional)}"
+            return f"{base}\n\nAdditional instructions:\n{chr(10).join(additional)}"
         return base
 
     def is_available(self, source_lang: str = "auto", target_lang: str = "en") -> bool:

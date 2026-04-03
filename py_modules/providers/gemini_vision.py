@@ -92,17 +92,19 @@ class GeminiVisionProvider(VisionProvider):
         return self._client.is_configured()
 
     def _build_additional_prompt(self) -> str:
-        """グローバル + ゲーム別プロンプトの追加指示を合成する。"""
+        """共通Vision プロンプト + ゲーム別Vision プロンプトの追加指示を合成する。
+        注入順: 共通Vision プロンプト → ゲーム別Vision プロンプト"""
         additional = []
         if self._custom_prompt:
             additional.append(self._custom_prompt)
         if self._game_prompt:
             additional.append(self._game_prompt)
         if additional:
-            return f"\n\nAdditional instructions: {chr(10).join(additional)}"
+            return f"\n\nAdditional instructions:\n{chr(10).join(additional)}"
         return ""
 
     # --- assist モード: OCR低信頼度領域の画像付き再認識+翻訳 ---
+    # 注入順: Vision Assist固定プロンプト → 共通Vision プロンプト → ゲーム別Vision プロンプト
 
     async def assist_translate(
         self,
@@ -117,6 +119,7 @@ class GeminiVisionProvider(VisionProvider):
 
         confidence_pct = int(confidence * 100)
 
+        # Vision Assist固定プロンプト: 役割定義・出力契約・hallucination抑制のみ
         system_prompt = (
             "You are a game text translator with OCR capability. "
             "You will receive a cropped image from a game screen along with "
@@ -124,9 +127,7 @@ class GeminiVisionProvider(VisionProvider):
             "The OCR result may be inaccurate. "
             "Read the text directly from the image, then translate it "
             f"from {src_name} to {tgt_name}. "
-            "Keep game-specific abbreviations (HP, MP, EXP, ATK, DEF, etc.), "
-            "numbers, and proper nouns unchanged unless you know the standard "
-            f"localized form in {tgt_name}. "
+            "Do NOT add information that is not present in the original. "
             "Return ONLY the translation. No explanations, notes, or extra text."
         )
         system_prompt += self._build_additional_prompt()
@@ -161,6 +162,7 @@ class GeminiVisionProvider(VisionProvider):
         return result
 
     # --- direct モード: OCRバイパス、画像から直接テキスト検出+翻訳 ---
+    # 注入順: Vision Direct固定プロンプト → 共通Vision プロンプト → ゲーム別Vision プロンプト
 
     async def direct_translate(
         self,
@@ -173,11 +175,13 @@ class GeminiVisionProvider(VisionProvider):
         tgt_name = _get_language_name(target_lang)
         src_name = "the detected language" if source_lang == "auto" else _get_language_name(source_lang)
 
+        # Vision Direct固定プロンプト: 役割定義・出力契約・JSON schema契約のみ
+        # 「画面端UIは無視」「数字は無視」等のゲーム依存指示は共通/ゲーム別プロンプトに入れる
         system_prompt = (
             "You are a game screen text detector and translator. "
             "You will receive a game screenshot. "
             f"Find all text, translate from {src_name} to {tgt_name}. "
-            "Keep abbreviations (HP, MP, EXP, etc.) and proper nouns unchanged. "
+            "Do NOT add information that is not present in the original. "
             "Group text by semantic meaning: merge consecutive lines that form a paragraph or sentence into ONE region. "
             "Menu items, buttons, labels, and standalone UI elements must each be a SEPARATE region. "
             "The rect must cover the entire grouped text area. "
@@ -308,6 +312,7 @@ class GeminiVisionProvider(VisionProvider):
         return valid_regions, reported_coordinate_mode
 
     # --- preflight ---
+    # 固定プロンプトのみ使用。共通/ゲーム別プロンプトは注入しない。
 
     async def preflight_check(self) -> tuple:
         if not self._client.is_configured():
