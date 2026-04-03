@@ -406,6 +406,10 @@ export class GameTranslatorLogic {
                                 }
                             }
                             this.imageState.showTranslatedImage(result.base64, translatedRegions);
+                            // Vision direct成功時は一時スクリーンショットを削除（OCRフローを経由しないため）
+                            if (result.path) {
+                                call('delete_screenshot', result.path).catch(() => {});
+                            }
                             return;
                         }
                         // Vision失敗 → 従来のOCRフローにフォールバック

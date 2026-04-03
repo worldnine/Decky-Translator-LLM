@@ -1817,6 +1817,19 @@ class Plugin:
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to delete temporary screenshot: {cleanup_error}")
 
+    async def delete_screenshot(self, image_path: str):
+        """一時スクリーンショットファイルを削除する。Vision direct経路など、
+        recognize_text_file を経由しない場合に使用。"""
+        if image_path and os.path.exists(image_path):
+            try:
+                os.remove(image_path)
+                logger.debug(f"Deleted temporary screenshot: {image_path}")
+                return True
+            except Exception as e:
+                logger.warning(f"Failed to delete temporary screenshot: {e}")
+                return False
+        return True
+
     async def translate_text(self, text_regions, target_language=None, input_language=None, image_data=None):
         try:
             if not text_regions:

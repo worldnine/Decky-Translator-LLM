@@ -791,14 +791,16 @@ json.dump({{"b64": b64, "w": w, "h": h}}, sys.stdout)
             logger.error(f"Vision direct失敗: {e}")
             return None
 
-        # coordinate_modeの判定: LLMの自己申告を優先
+        # coordinate_modeの判定: LLMの自己申告を優先、未申告時は既存設定を維持
         if reported_mode and "pixel" in str(reported_mode).lower():
             effective_mode = "pixel"
             logger.info(f"coordinate_mode: LLM自己申告 pixel ({reported_mode})")
-        else:
+        elif reported_mode:
             effective_mode = "normalized"
-            if reported_mode:
-                logger.info(f"coordinate_mode: LLM自己申告 normalized ({reported_mode})")
+            logger.info(f"coordinate_mode: LLM自己申告 normalized ({reported_mode})")
+        else:
+            effective_mode = self._vision_coordinate_mode
+            logger.info(f"coordinate_mode: 未申告、既存設定を維持 ({effective_mode})")
         self._vision_coordinate_mode = effective_mode
 
         # 座標変換 + TranslatedRegion互換形式
