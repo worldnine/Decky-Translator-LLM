@@ -901,8 +901,9 @@ class Plugin:
     _vision_assist_send_all: bool = False
     _vision_coordinate_mode: str = "pixel"
 
-    # ゲーム別プロンプト（現在適用中のゲーム別プロンプト内容）
-    _current_game_prompt: str = ""
+    # ゲーム別プロンプト（現在適用中）
+    _current_game_text_prompt: str = ""
+    _current_game_vision_prompt: str = ""
 
     # Generic settings handlers
     async def get_setting(self, key, default=None):
@@ -1093,7 +1094,12 @@ class Plugin:
             logger.error(traceback.format_exc())
             return False
 
-    # ゲーム別プロンプト機能
+    # プロンプトファイル機能
+
+    def _get_prompts_dir(self):
+        """共通プロンプトファイルの保存ディレクトリを返す"""
+        return os.path.join(settingsDir, "decky-translator-prompts")
+
     def _get_games_dir(self):
         """ゲーム別プロンプトファイルの保存ディレクトリを返す"""
         return os.path.join(settingsDir, "decky-translator-games")
@@ -1106,30 +1112,124 @@ class Plugin:
             lines = lines[1:]
         return "\n".join(lines).strip()
 
-    def _apply_game_prompt(self, game_prompt: str):
-        """ゲーム別プロンプトをText LLMとVision LLMの両方に適用する"""
-        self._current_game_prompt = game_prompt
+    def _apply_game_text_prompt(self, game_prompt: str):
+        """ゲーム別Text プロンプトをText LLMに適用する"""
+        self._current_game_text_prompt = game_prompt
         if self._provider_manager:
             self._provider_manager.configure_text_llm(game_prompt=game_prompt)
+
+    def _apply_game_vision_prompt(self, game_prompt: str):
+        """ゲーム別Vision プロンプトをVision LLMに適用する"""
+        self._current_game_vision_prompt = game_prompt
+        if self._provider_manager:
             self._provider_manager.configure_vision(game_prompt=game_prompt)
 
-    async def ensure_game_prompt_file(self, app_id: int, display_name: str):
-        """ゲーム別プロンプトファイルを確保し、内容を読み込んでプロンプトを適用する"""
+    def _apply_common_text_prompt(self, prompt: str):
+        """共通Text プロンプトをText LLMに適用する"""
+        self._llm_system_prompt = prompt
+        if self._provider_manager:
+            self._provider_manager.configure_text_llm(system_prompt=prompt)
+
+    def _apply_common_vision_prompt(self, prompt: str):
+        """共通Vision プロンプトをVision LLMに適用する"""
+        if self._provider_manager:
+            self._provider_manager.configure_vision(system_prompt=prompt)
+
+    # --- 共通プロンプト API ---
+
+    async def get_common_text_prompt(self):
+        """共通Text プロンプトの読み込み"""
         try:
+            prompts_dir = self._get_prompts_dir()
+            file_path = os.path.join(prompts_dir, "text-common.txt")
+            if not os.path.exists(file_path):
+                return {"exists": False, "file_path": file_path, "content": ""}
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
+                content = f.read()
+            return {"exists": True, "file_path": file_path, "content": content}
+        except Exception as e:
+            logger.error(f"共通Text プロンプトの読み込みに失敗: {e}")
+            return {"exists": False, "error": str(e)}
+
+    async def save_common_text_prompt(self, content: str):
+        """共通Text プロンプトの保存と適用"""
+        try:
+            prompts_dir = self._get_prompts_dir()
+            os.makedirs(prompts_dir, exist_ok=True)
+            file_path = os.path.join(prompts_dir, "text-common.txt")
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            logger.info("共通Text プロンプトを保存")
+            self._apply_common_text_prompt(content.strip())
+            return True
+        except Exception as e:
+            logger.error(f"共通Text プロンプトの保存に失敗: {e}")
+            logger.error(traceback.format_exc())
+            return False
+
+    async def get_common_vision_prompt(self):
+        """共通Vision プロンプトの読み込み"""
+        try:
+            prompts_dir = self._get_prompts_dir()
+            file_path = os.path.join(prompts_dir, "vision-common.txt")
+            if not os.path.exists(file_path):
+                return {"exists": False, "file_path": file_path, "content": ""}
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
+                content = f.read()
+            return {"exists": True, "file_path": file_path, "content": content}
+        except Exception as e:
+            logger.error(f"共通Vision プロンプトの読み込みに失敗: {e}")
+            return {"exists": False, "error": str(e)}
+
+    async def save_common_vision_prompt(self, content: str):
+        """共通Vision プロンプトの保存と適用"""
+        try:
+            prompts_dir = self._get_prompts_dir()
+            os.makedirs(prompts_dir, exist_ok=True)
+            file_path = os.path.join(prompts_dir, "vision-common.txt")
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            logger.info("共通Vision プロンプトを保存")
+            self._apply_common_vision_prompt(content.strip())
+            return True
+        except Exception as e:
+            logger.error(f"共通Vision プロンプトの保存に失敗: {e}")
+            logger.error(traceback.format_exc())
+            return False
+
+    # --- ゲーム別プロンプト API ---
+
+    def _migrate_old_game_prompt(self, app_id: int):
+        """旧形式（{app_id}.txt）から新形式（{app_id}/text.txt）へ移行する"""
+        games_dir = self._get_games_dir()
+        old_path = os.path.join(games_dir, f"{app_id}.txt")
+        new_dir = os.path.join(games_dir, str(app_id))
+
+        if os.path.exists(old_path) and not os.path.isdir(new_dir):
+            os.makedirs(new_dir, exist_ok=True)
+            new_path = os.path.join(new_dir, "text.txt")
+            os.rename(old_path, new_path)
+            logger.info(f"ゲーム別プロンプト移行: {old_path} → {new_path}")
+
+    async def ensure_game_text_prompt_file(self, app_id: int, display_name: str):
+        """ゲーム別Text プロンプトファイルを確保し、内容を読み込んで適用する"""
+        try:
+            self._migrate_old_game_prompt(app_id)
             games_dir = self._get_games_dir()
-            os.makedirs(games_dir, exist_ok=True)
-            file_path = os.path.join(games_dir, f"{app_id}.txt")
+            game_dir = os.path.join(games_dir, str(app_id))
+            os.makedirs(game_dir, exist_ok=True)
+            file_path = os.path.join(game_dir, "text.txt")
 
             if not os.path.exists(file_path):
                 with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(f"--- {display_name} (App ID: {app_id}) ---\n")
-                logger.info(f"ゲーム別プロンプトファイルを作成: {file_path}")
+                    f.write(f"--- {display_name} (App ID: {app_id}) Text ---\n")
+                logger.info(f"ゲーム別Text プロンプトファイルを作成: {file_path}")
 
             with open(file_path, 'r', encoding='utf-8-sig') as f:
                 content = f.read()
 
             prompt = self._extract_prompt_from_content(content)
-            self._apply_game_prompt(prompt)
+            self._apply_game_text_prompt(prompt)
 
             return {
                 "app_id": app_id,
@@ -1139,15 +1239,46 @@ class Plugin:
                 "prompt": prompt,
             }
         except Exception as e:
-            logger.error(f"ゲーム別プロンプトファイルの処理に失敗: {e}")
+            logger.error(f"ゲーム別Text プロンプトファイルの処理に失敗: {e}")
             logger.error(traceback.format_exc())
             return {"app_id": app_id, "error": str(e)}
 
-    async def get_game_prompt(self, app_id: int):
-        """ゲーム別プロンプトファイルの内容を返す"""
+    async def ensure_game_vision_prompt_file(self, app_id: int, display_name: str):
+        """ゲーム別Vision プロンプトファイルを確保し、内容を読み込んで適用する"""
         try:
             games_dir = self._get_games_dir()
-            file_path = os.path.join(games_dir, f"{app_id}.txt")
+            game_dir = os.path.join(games_dir, str(app_id))
+            os.makedirs(game_dir, exist_ok=True)
+            file_path = os.path.join(game_dir, "vision.txt")
+
+            if not os.path.exists(file_path):
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(f"--- {display_name} (App ID: {app_id}) Vision ---\n")
+                logger.info(f"ゲーム別Vision プロンプトファイルを作成: {file_path}")
+
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
+                content = f.read()
+
+            prompt = self._extract_prompt_from_content(content)
+            self._apply_game_vision_prompt(prompt)
+
+            return {
+                "app_id": app_id,
+                "display_name": display_name,
+                "file_path": file_path,
+                "content": content,
+                "prompt": prompt,
+            }
+        except Exception as e:
+            logger.error(f"ゲーム別Vision プロンプトファイルの処理に失敗: {e}")
+            logger.error(traceback.format_exc())
+            return {"app_id": app_id, "error": str(e)}
+
+    async def get_game_text_prompt(self, app_id: int):
+        """ゲーム別Text プロンプトファイルの内容を返す"""
+        try:
+            games_dir = self._get_games_dir()
+            file_path = os.path.join(games_dir, str(app_id), "text.txt")
             if not os.path.exists(file_path):
                 return {"exists": False, "app_id": app_id}
             with open(file_path, 'r', encoding='utf-8-sig') as f:
@@ -1161,25 +1292,81 @@ class Plugin:
                 "prompt": prompt,
             }
         except Exception as e:
-            logger.error(f"ゲーム別プロンプトの読み込みに失敗: {e}")
+            logger.error(f"ゲーム別Text プロンプトの読み込みに失敗: {e}")
             return {"exists": False, "app_id": app_id, "error": str(e)}
 
-    async def save_game_prompt(self, app_id: int, content: str):
-        """ゲーム別プロンプトファイルを保存し、プロンプトを再適用する"""
+    async def get_game_vision_prompt(self, app_id: int):
+        """ゲーム別Vision プロンプトファイルの内容を返す"""
         try:
             games_dir = self._get_games_dir()
-            file_path = os.path.join(games_dir, f"{app_id}.txt")
+            file_path = os.path.join(games_dir, str(app_id), "vision.txt")
+            if not os.path.exists(file_path):
+                return {"exists": False, "app_id": app_id}
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
+                content = f.read()
+            prompt = self._extract_prompt_from_content(content)
+            return {
+                "exists": True,
+                "app_id": app_id,
+                "file_path": file_path,
+                "content": content,
+                "prompt": prompt,
+            }
+        except Exception as e:
+            logger.error(f"ゲーム別Vision プロンプトの読み込みに失敗: {e}")
+            return {"exists": False, "app_id": app_id, "error": str(e)}
+
+    async def save_game_text_prompt(self, app_id: int, content: str):
+        """ゲーム別Text プロンプトファイルを保存し、プロンプトを再適用する"""
+        try:
+            games_dir = self._get_games_dir()
+            game_dir = os.path.join(games_dir, str(app_id))
+            os.makedirs(game_dir, exist_ok=True)
+            file_path = os.path.join(game_dir, "text.txt")
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(content)
-            logger.info(f"ゲーム別プロンプトを保存: app_id={app_id}")
-
+            logger.info(f"ゲーム別Text プロンプトを保存: app_id={app_id}")
             prompt = self._extract_prompt_from_content(content)
-            self._apply_game_prompt(prompt)
+            self._apply_game_text_prompt(prompt)
             return True
         except Exception as e:
-            logger.error(f"ゲーム別プロンプトの保存に失敗: {e}")
+            logger.error(f"ゲーム別Text プロンプトの保存に失敗: {e}")
             logger.error(traceback.format_exc())
             return False
+
+    async def save_game_vision_prompt(self, app_id: int, content: str):
+        """ゲーム別Vision プロンプトファイルを保存し、プロンプトを再適用する"""
+        try:
+            games_dir = self._get_games_dir()
+            game_dir = os.path.join(games_dir, str(app_id))
+            os.makedirs(game_dir, exist_ok=True)
+            file_path = os.path.join(game_dir, "vision.txt")
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            logger.info(f"ゲーム別Vision プロンプトを保存: app_id={app_id}")
+            prompt = self._extract_prompt_from_content(content)
+            self._apply_game_vision_prompt(prompt)
+            return True
+        except Exception as e:
+            logger.error(f"ゲーム別Vision プロンプトの保存に失敗: {e}")
+            logger.error(traceback.format_exc())
+            return False
+
+    # --- 後方互換: 旧 API ---
+
+    async def ensure_game_prompt_file(self, app_id: int, display_name: str):
+        """旧API互換: ゲーム別プロンプトファイルを確保する（Text側に委譲）"""
+        text_result = await self.ensure_game_text_prompt_file(app_id, display_name)
+        await self.ensure_game_vision_prompt_file(app_id, display_name)
+        return text_result
+
+    async def get_game_prompt(self, app_id: int):
+        """旧API互換: ゲーム別プロンプトの取得（Text側に委譲）"""
+        return await self.get_game_text_prompt(app_id)
+
+    async def save_game_prompt(self, app_id: int, content: str):
+        """旧API互換: ゲーム別プロンプトの保存（Text側に委譲）"""
+        return await self.save_game_text_prompt(app_id, content)
 
     async def get_all_settings(self):
         try:
@@ -2071,6 +2258,19 @@ class Plugin:
                 assist_send_all=self._vision_assist_send_all,
                 coordinate_mode=self._vision_coordinate_mode,
             )
+
+            # 共通プロンプトファイルを読み込んで適用
+            prompts_dir = self._get_prompts_dir()
+            text_common_path = os.path.join(prompts_dir, "text-common.txt")
+            if os.path.exists(text_common_path):
+                with open(text_common_path, 'r', encoding='utf-8-sig') as f:
+                    self._apply_common_text_prompt(f.read().strip())
+                logger.info("共通Text プロンプトを読み込み")
+            vision_common_path = os.path.join(prompts_dir, "vision-common.txt")
+            if os.path.exists(vision_common_path):
+                with open(vision_common_path, 'r', encoding='utf-8-sig') as f:
+                    self._apply_common_vision_prompt(f.read().strip())
+                logger.info("共通Vision プロンプトを読み込み")
 
             # Load and apply RapidOCR-specific settings
             if self._settings.get_setting("custom_recognition_settings", False):
