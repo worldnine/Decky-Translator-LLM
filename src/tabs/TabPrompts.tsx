@@ -143,45 +143,41 @@ export const TabPrompts: VFC = () => {
         }
     }, [settings.translationProvider, settings.visionMode]);
 
-    // 保存ハンドラ（失敗時は巻き戻し + console.error）
+    // 保存ハンドラ（失敗時は saved state を更新しない。ユーザーの編集中テキストには触らない）
     const saveCommonText = async () => {
         if (commonTextContent !== commonTextSaved) {
-            const prev = commonTextSaved;
+            const saving = commonTextContent;
             try {
-                const ok = await call<boolean>('save_common_text_prompt', commonTextContent);
-                if (ok) { setCommonTextSaved(commonTextContent); }
-                else { setCommonTextContent(prev); }
-            } catch { setCommonTextContent(prev); }
+                const ok = await call<boolean>('save_common_text_prompt', saving);
+                if (ok) { setCommonTextSaved(saving); }
+            } catch { /* saved state 未更新 = 次回 blur で再試行 */ }
         }
     };
     const saveCommonVision = async () => {
         if (commonVisionContent !== commonVisionSaved) {
-            const prev = commonVisionSaved;
+            const saving = commonVisionContent;
             try {
-                const ok = await call<boolean>('save_common_vision_prompt', commonVisionContent);
-                if (ok) { setCommonVisionSaved(commonVisionContent); }
-                else { setCommonVisionContent(prev); }
-            } catch { setCommonVisionContent(prev); }
+                const ok = await call<boolean>('save_common_vision_prompt', saving);
+                if (ok) { setCommonVisionSaved(saving); }
+            } catch { /* saved state 未更新 = 次回 blur で再試行 */ }
         }
     };
     const saveGameText = async () => {
         if (gameInfo && gameTextContent !== gameTextSaved) {
-            const prev = gameTextSaved;
+            const saving = gameTextContent;
             try {
-                const ok = await call<boolean>('save_game_text_prompt', gameInfo.appId, gameTextContent);
-                if (ok) { setGameTextSaved(gameTextContent); }
-                else { setGameTextContent(prev); }
-            } catch { setGameTextContent(prev); }
+                const ok = await call<boolean>('save_game_text_prompt', gameInfo.appId, saving);
+                if (ok) { setGameTextSaved(saving); }
+            } catch { /* saved state 未更新 = 次回 blur で再試行 */ }
         }
     };
     const saveGameVision = async () => {
         if (gameInfo && gameVisionContent !== gameVisionSaved) {
-            const prev = gameVisionSaved;
+            const saving = gameVisionContent;
             try {
-                const ok = await call<boolean>('save_game_vision_prompt', gameInfo.appId, gameVisionContent);
-                if (ok) { setGameVisionSaved(gameVisionContent); }
-                else { setGameVisionContent(prev); }
-            } catch { setGameVisionContent(prev); }
+                const ok = await call<boolean>('save_game_vision_prompt', gameInfo.appId, saving);
+                if (ok) { setGameVisionSaved(saving); }
+            } catch { /* saved state 未更新 = 次回 blur で再試行 */ }
         }
     };
 

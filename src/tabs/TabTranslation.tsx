@@ -516,13 +516,26 @@ export const TabTranslation: VFC = () => {
                                     }
                                 }
                                 if (newMode === 'direct') {
-                                    const result = await call<{ok: boolean, message: string}>('preflight_vision_check', newMode);
-                                    if (!result?.ok) {
+                                    try {
+                                        const result = await call<{ok: boolean, message: string}>('preflight_vision_check', newMode);
+                                        if (!result?.ok) {
+                                            showModal(
+                                                <ModalRoot>
+                                                    <div style={{ padding: "20px" }}>
+                                                        <h2>Vision preflight failed</h2>
+                                                        <p style={{ color: "#aaa", marginTop: "10px" }}>{result?.message || "Unknown error"}</p>
+                                                        <DialogButton onClick={() => {}} style={{ marginTop: "15px" }}>OK</DialogButton>
+                                                    </div>
+                                                </ModalRoot>
+                                            );
+                                            return;
+                                        }
+                                    } catch (e) {
                                         showModal(
                                             <ModalRoot>
                                                 <div style={{ padding: "20px" }}>
-                                                    <h2>Vision preflight failed</h2>
-                                                    <p style={{ color: "#aaa", marginTop: "10px" }}>{result?.message || "Unknown error"}</p>
+                                                    <h2>Vision preflight error</h2>
+                                                    <p style={{ color: "#aaa", marginTop: "10px" }}>{String(e)}</p>
                                                     <DialogButton onClick={() => {}} style={{ marginTop: "15px" }}>OK</DialogButton>
                                                 </div>
                                             </ModalRoot>

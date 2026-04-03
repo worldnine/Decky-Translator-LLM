@@ -1106,11 +1106,9 @@ class Plugin:
             with open(vision_common_path, 'w', encoding='utf-8') as f:
                 f.write("")
             logger.info("vision-common.txt を生成（空）")
-        # ファイルから読み込んで適用（空ならプロンプト注入なし）
+        # ファイルから読み込んで適用（空なら空文字列で既存プロンプトをクリア）
         with open(vision_common_path, 'r', encoding='utf-8-sig') as f:
-            content = f.read().strip()
-            if content:
-                self._apply_common_vision_prompt(content)
+            self._apply_common_vision_prompt(f.read().strip())
 
     def _get_prompts_dir(self):
         """共通プロンプトファイルの保存ディレクトリを返す"""
