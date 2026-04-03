@@ -1195,14 +1195,15 @@ class Plugin:
     # --- ゲーム別プロンプト API ---
 
     def _migrate_old_game_prompt(self, app_id: int):
-        """旧形式（{app_id}.txt）から新形式（{app_id}/text.txt）へ移行する"""
+        """旧形式（{app_id}.txt）から新形式（{app_id}/text.txt）へ移行する。
+        text.txt が既に存在する場合は移行済みとみなしスキップ。"""
         games_dir = self._get_games_dir()
         old_path = os.path.join(games_dir, f"{app_id}.txt")
         new_dir = os.path.join(games_dir, str(app_id))
+        new_path = os.path.join(new_dir, "text.txt")
 
-        if os.path.exists(old_path) and not os.path.isdir(new_dir):
+        if os.path.exists(old_path) and not os.path.exists(new_path):
             os.makedirs(new_dir, exist_ok=True)
-            new_path = os.path.join(new_dir, "text.txt")
             os.rename(old_path, new_path)
             logger.info(f"ゲーム別プロンプト移行: {old_path} → {new_path}")
 

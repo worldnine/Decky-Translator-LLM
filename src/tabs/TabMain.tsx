@@ -197,9 +197,9 @@ export const TabMain: VFC<TabMainProps> = ({ logic, overlayVisible, providerStat
                                         </div>
                                     )}
                                     {settings.translationProvider === 'llm' && (
-                                        <div style={{ color: (settings.llmBaseUrl && settings.llmModel) ? '#666' : '#ff6b6b', fontSize: '10px' }}>
-                                            {(settings.llmBaseUrl && settings.llmModel)
-                                                ? `Model: ${settings.llmModel}`
+                                        <div style={{ color: (settings.textLlmBaseUrl && settings.textLlmModel) ? '#666' : '#ff6b6b', fontSize: '10px' }}>
+                                            {(settings.textLlmBaseUrl && settings.textLlmModel)
+                                                ? `Model: ${settings.textLlmModel}`
                                                 : 'Base URL and Model required'}
                                         </div>
                                     )}

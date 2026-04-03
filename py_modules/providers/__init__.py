@@ -196,7 +196,8 @@ class ProviderManager:
 
     def _update_vision_provider_config(self) -> None:
         """Vision Providerの設定を現在の状態に合わせて更新する。
-        Vision LLM専用設定が空ならText LLM設定をフォールバック。"""
+        接続設定（base_url, api_key, model）のみText LLMからフォールバック。
+        プロンプト（custom_prompt, game_prompt）はフォールバックしない。"""
         if not self._vision_provider:
             return
         self._vision_provider.configure(
@@ -204,8 +205,8 @@ class ProviderManager:
             api_key=self._vision_llm_api_key or self._text_llm_api_key,
             model=self._vision_llm_model or self._text_llm_model,
             disable_thinking=self._vision_llm_disable_thinking,
-            custom_prompt=self._vision_llm_system_prompt or self._text_llm_system_prompt,
-            game_prompt=self._vision_llm_game_prompt or self._text_llm_game_prompt,
+            custom_prompt=self._vision_llm_system_prompt,
+            game_prompt=self._vision_llm_game_prompt,
         )
 
     def configure(
@@ -339,8 +340,8 @@ class ProviderManager:
                 api_key=self._vision_llm_api_key or self._text_llm_api_key,
                 model=self._vision_llm_model or self._text_llm_model,
                 disable_thinking=self._vision_llm_disable_thinking,
-                custom_prompt=self._vision_llm_system_prompt or self._text_llm_system_prompt,
-                game_prompt=self._vision_llm_game_prompt or self._text_llm_game_prompt,
+                custom_prompt=self._vision_llm_system_prompt,
+                game_prompt=self._vision_llm_game_prompt,
             )
         return self._vision_provider
 
