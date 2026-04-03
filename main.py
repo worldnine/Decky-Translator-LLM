@@ -80,7 +80,7 @@ import urllib3
 import requests
 
 # Import provider system
-from providers import ProviderManager, TextRegion, NetworkError, ApiKeyError, RateLimitError
+from providers import ProviderManager, NetworkError, ApiKeyError
 from migration import (
     normalize_gemini_setting,
     extract_prompt_from_content,
@@ -1505,114 +1505,26 @@ class Plugin:
         logger.debug(f"No AppId found for pid={pid}")
         return 0
 
-    def _sample_bg_colors(self, image_bytes, text_regions):
-        """Sample average background color for each OCR region from the screenshot."""
-        try:
-            from PIL import Image
-            import io
-            img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-            img_width, img_height = img.size
-            pixels = img.load()
-
-            for region in text_regions:
-                r = region.rect
-                left = max(0, r.get("left", 0))
-                top = max(0, r.get("top", 0))
-                right = min(img_width, r.get("right", 0))
-                bottom = min(img_height, r.get("bottom", 0))
-
-                if right <= left or bottom <= top:
-                    continue
-
-                w = right - left
-                h = bottom - top
-                step_x = max(1, w // 5)
-                step_y = max(1, h // 5)
-
-                total_r, total_g, total_b = 0, 0, 0
-                count = 0
-                for sy in range(top, bottom, step_y):
-                    for sx in range(left, right, step_x):
-                        pr, pg, pb = pixels[sx, sy]
-                        total_r += pr
-                        total_g += pg
-                        total_b += pb
-                        count += 1
-
-                if count > 0:
-                    region.bg_color = [
-                        total_r // count,
-                        total_g // count,
-                        total_b // count
-                    ]
-        except Exception as e:
-            logger.debug(f"Background color sampling failed (non-fatal): {e}")
+    # --- 旧互換RPC（deprecated） ---
+    # Gemini専用構成では vision_translate が正式経路。
+    # 以下はフロントエンドの TextRecognizer.tsx から参照が残っているため、
+    # エラーにならないよう空実装で残す。次段で TextRecognizer.tsx ごと削除予定。
 
     async def recognize_text(self, image_data: str):
-        try:
-            if not image_data:
-                logger.error("Empty image data for text recognition")
-                return []
-
-            if image_data.startswith('data:image'):
-                image_data = image_data.split(',', 1)[1]
-
-            image_bytes = base64.b64decode(image_data)
-
-            if not self._provider_manager:
-                logger.error("Provider manager not initialized")
-                return []
-
-            start_time = time.time()
-            text_regions = await self._provider_manager.recognize_text(
-                image_bytes,
-                language=self._input_language
-            )
-            logger.info(f"OCR completed in {time.time() - start_time:.2f}s, found {len(text_regions)} regions")
-
-            # Disabled temporarily
-            # TODO: Work on it
-            # self._sample_bg_colors(image_bytes, text_regions)
-
-            return [region.to_dict() for region in text_regions]
-
-        except NetworkError as e:
-            logger.error(f"Network error during OCR: {e}")
-            return {"error": "network_error", "message": str(e)}
-        except ApiKeyError as e:
-            logger.error(f"API key error during OCR: {e}")
-            return {"error": "api_key_error", "message": "Invalid API key"}
-        except RateLimitError as e:
-            logger.error(f"Rate limit during OCR: {e}")
-            return {"error": "rate_limit_error", "message": str(e)}
-        except Exception as e:
-            logger.error(f"Text recognition error: {e}")
-            logger.error(traceback.format_exc())
-            return []
+        """deprecated: Gemini専用構成では未使用。vision_translate を使用してください。"""
+        logger.warning("recognize_text は deprecated です。vision_translate を使用してください。")
+        return []
 
     async def recognize_text_file(self, image_path: str):
-        try:
-            if not os.path.exists(image_path):
-                logger.error(f"Image file does not exist: {image_path}")
-                return []
-
-            base64_data = get_base64_image(image_path)
-            if not base64_data:
-                logger.error("Failed to encode image for OCR")
-                return []
-
-            return await Plugin.recognize_text(self, base64_data)
-        except Exception as e:
-            logger.error(f"recognize_text_file error: {e}")
-            logger.error(traceback.format_exc())
-            return []
-        finally:
-            if image_path and os.path.exists(image_path):
-                try:
-                    os.remove(image_path)
-                    logger.debug(f"Deleted temporary screenshot: {image_path}")
-                except Exception as cleanup_error:
-                    logger.warning(f"Failed to delete temporary screenshot: {cleanup_error}")
+        """deprecated: Gemini専用構成では未使用。vision_translate を使用してください。"""
+        logger.warning("recognize_text_file は deprecated です。vision_translate を使用してください。")
+        # 一時ファイルの後始末だけは行う
+        if image_path and os.path.exists(image_path):
+            try:
+                os.remove(image_path)
+            except Exception:
+                pass
+        return []
 
     async def delete_screenshot(self, image_path: str):
         """一時スクリーンショットファイルを削除する。Vision direct経路など、
@@ -1628,51 +1540,9 @@ class Plugin:
         return True
 
     async def translate_text(self, text_regions, target_language=None, input_language=None, image_data=None):
-        try:
-            # SSH編集対応: 翻訳前に共通プロンプトを再読み込み
-            self._reload_common_prompts()
-            if not text_regions:
-                return []
-
-            target_lang = target_language or self._target_language
-            input_lang = input_language or self._input_language
-
-            if not self._provider_manager:
-                logger.error("Provider manager not initialized")
-                return None
-
-            texts_to_translate = [region["text"] for region in text_regions]
-
-            start_time = time.time()
-            translated_texts = await self._provider_manager.translate_text(
-                texts_to_translate,
-                source_lang=input_lang,
-                target_lang=target_lang,
-                text_regions=text_regions,
-                image_bytes=None,
-            )
-            logger.info(f"Translation completed in {time.time() - start_time:.2f}s, {len(texts_to_translate)} regions")
-
-            translated_regions = []
-            for i, translated_text in enumerate(translated_texts):
-                if i < len(text_regions):
-                    translated_regions.append({
-                        **text_regions[i],
-                        "translatedText": translated_text
-                    })
-
-            return translated_regions
-
-        except NetworkError as e:
-            logger.error(f"Network error during translation: {e}")
-            return {"error": "network_error", "message": str(e)}
-        except ApiKeyError as e:
-            logger.error(f"API key error during translation: {e}")
-            return {"error": "api_key_error", "message": "Invalid API key"}
-        except Exception as e:
-            logger.error(f"Translation error: {e}")
-            logger.error(traceback.format_exc())
-            return None
+        """deprecated: Gemini専用構成では未使用。vision_translate を使用してください。"""
+        logger.warning("translate_text は deprecated です。vision_translate を使用してください。")
+        return []
 
     async def preflight_vision_check(self, mode: str = None):
         """Vision Translationの事前検証RPC。Vision+JSON対応のみ確認。
