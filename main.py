@@ -81,6 +81,13 @@ import requests
 
 # Import provider system
 from providers import ProviderManager, TextRegion, NetworkError, ApiKeyError, RateLimitError
+from migration import (
+    normalize_gemini_setting,
+    extract_prompt_from_content,
+    migrate_llm_system_prompt,
+    ensure_vision_common_file,
+    migrate_old_game_prompt,
+)
 
 _processing_lock = False
 
@@ -1055,20 +1062,8 @@ class Plugin:
         ファイルが存在すればその内容を読み込んで適用する。
         暗黙の意味論注入は行わない — ユーザーが明示的に書いた内容のみ適用。"""
         prompts_dir = self._get_prompts_dir()
-        vision_common_path = os.path.join(prompts_dir, "vision-common.txt")
-        legacy_text_common_path = os.path.join(prompts_dir, "text-common.txt")
-        if not os.path.exists(vision_common_path):
-            os.makedirs(prompts_dir, exist_ok=True)
-            if os.path.exists(legacy_text_common_path):
-                os.rename(legacy_text_common_path, vision_common_path)
-                logger.info("text-common.txt を vision-common.txt に移行")
-            else:
-                with open(vision_common_path, 'w', encoding='utf-8') as f:
-                    f.write("")
-                logger.info("vision-common.txt を生成（空）")
-        # ファイルから読み込んで適用（空なら空文字列で既存プロンプトをクリア）
-        with open(vision_common_path, 'r', encoding='utf-8-sig') as f:
-            self._apply_common_vision_prompt(f.read().strip())
+        content = ensure_vision_common_file(prompts_dir)
+        self._apply_common_vision_prompt(content)
 
     def _get_prompts_dir(self):
         """共通プロンプトファイルの保存ディレクトリを返す"""
@@ -1079,12 +1074,8 @@ class Plugin:
         return os.path.join(settingsDir, "decky-translator-games")
 
     def _extract_prompt_from_content(self, content: str) -> str:
-        """ファイル内容から1行目のメタ行を除去し、プロンプト部分のみ返す。
-        1行目が '--- ... ---' パターンの場合のみ除去。それ以外は全てプロンプト。"""
-        lines = content.split("\n")
-        if lines and lines[0].startswith("---") and lines[0].endswith("---"):
-            lines = lines[1:]
-        return "\n".join(lines).strip()
+        """ファイル内容から1行目のメタ行を除去し、プロンプト部分のみ返す。"""
+        return extract_prompt_from_content(content)
 
     def _apply_game_text_prompt(self, game_prompt: str):
         """旧互換。Gemini用ゲーム別 prompt と同じ内容を適用する。"""
@@ -1157,25 +1148,7 @@ class Plugin:
 
     def _migrate_old_game_prompt(self, app_id: int):
         """旧形式のゲーム別 prompt を {app_id}/vision.txt へ移行する。"""
-        games_dir = self._get_games_dir()
-        new_dir = os.path.join(games_dir, str(app_id))
-        new_path = os.path.join(new_dir, "vision.txt")
-
-        if os.path.exists(new_path):
-            return
-
-        legacy_candidates = [
-            os.path.join(new_dir, "text.txt"),
-            os.path.join(games_dir, f"{app_id}.txt"),
-        ]
-
-        for old_path in legacy_candidates:
-            if not os.path.exists(old_path):
-                continue
-            os.makedirs(new_dir, exist_ok=True)
-            os.rename(old_path, new_path)
-            logger.info(f"ゲーム別プロンプト移行: {old_path} → {new_path}")
-            break
+        migrate_old_game_prompt(self._get_games_dir(), app_id)
 
     async def ensure_game_text_prompt_file(self, app_id: int, display_name: str):
         """旧互換。ゲーム別 Gemini prompt を返す。"""
@@ -2032,57 +2005,13 @@ class Plugin:
             # 互換RPC用の旧プロバイダー設定は固定既定値のまま残す。
             # UIからは到達しないため、旧設定ファイルの provider 選択値は読み戻さない。
 
-            # Gemini設定を読み込み（vision_llm_* -> text_llm_* -> llm_* の順でフォールバック）
-            self._gemini_base_url = self._settings.get_setting(
-                "gemini_base_url",
-                self._settings.get_setting(
-                    "vision_llm_base_url",
-                    self._settings.get_setting(
-                        "text_llm_base_url",
-                        self._settings.get_setting("llm_base_url", "")
-                    )
-                )
-            )
-            self._gemini_api_key = self._settings.get_setting(
-                "gemini_api_key",
-                self._settings.get_setting(
-                    "vision_llm_api_key",
-                    self._settings.get_setting(
-                        "text_llm_api_key",
-                        self._settings.get_setting("llm_api_key", "")
-                    )
-                )
-            )
-            self._gemini_model = self._settings.get_setting(
-                "gemini_model",
-                self._settings.get_setting(
-                    "vision_llm_model",
-                    self._settings.get_setting(
-                        "text_llm_model",
-                        self._settings.get_setting("llm_model", "")
-                    )
-                )
-            )
-            self._gemini_disable_thinking = self._settings.get_setting(
-                "gemini_disable_thinking",
-                self._settings.get_setting(
-                    "vision_llm_disable_thinking",
-                    self._settings.get_setting(
-                        "text_llm_disable_thinking",
-                        self._settings.get_setting("llm_disable_thinking", True)
-                    )
-                )
-            )
-            self._gemini_parallel = self._settings.get_setting(
-                "gemini_parallel",
-                self._settings.get_setting(
-                    "vision_llm_parallel",
-                    self._settings.get_setting(
-                        "text_llm_parallel",
-                        self._settings.get_setting("llm_parallel", True)
-                    )
-                )
-            )
+            # Gemini設定を読み込み（gemini_* > vision_llm_* > text_llm_* > llm_* の順でフォールバック）
+            getter = self._settings.get_setting
+            self._gemini_base_url = normalize_gemini_setting(getter, "base_url", default="")
+            self._gemini_api_key = normalize_gemini_setting(getter, "api_key", default="")
+            self._gemini_model = normalize_gemini_setting(getter, "model", default="")
+            self._gemini_disable_thinking = normalize_gemini_setting(getter, "disable_thinking", default=True)
+            self._gemini_parallel = normalize_gemini_setting(getter, "parallel", default=True)
             self._vision_mode = "direct"
             self._vision_coordinate_mode = self._settings.get_setting(
                 "vision_coordinate_mode",
@@ -2118,15 +2047,10 @@ class Plugin:
 
             # 共通 Gemini prompt を読み込んで適用
             prompts_dir = self._get_prompts_dir()
-            vision_common_path = os.path.join(prompts_dir, "vision-common.txt")
 
             # 旧 llm_system_prompt からの移行: ファイルが存在しない場合のみ
             old_system_prompt = self._settings.get_setting("llm_system_prompt", "")
-            if not os.path.exists(vision_common_path) and old_system_prompt:
-                os.makedirs(prompts_dir, exist_ok=True)
-                with open(vision_common_path, 'w', encoding='utf-8') as f:
-                    f.write(old_system_prompt)
-                logger.info("旧 llm_system_prompt を vision-common.txt に移行")
+            migrate_llm_system_prompt(prompts_dir, old_system_prompt)
 
             self._ensure_vision_common_prompt_file()
 
