@@ -463,16 +463,7 @@ export const TabTranslation: VFC = () => {
                                 />
                             </Field>
                         </PanelSectionRow>
-                        <PanelSectionRow>
-                            <Field label="System Prompt" childrenContainerWidth="max">
-                                <TextField
-                                    value={settings.llmSystemPrompt}
-                                    onChange={(e) => updateSetting('llmSystemPrompt', e.target.value, 'LLM System Prompt')}
-                                    bShowClearAction={true}
-                                    description="Additional instructions for the LLM translator (appended to default prompt)"
-                                />
-                            </Field>
-                        </PanelSectionRow>
+                        {/* 共通プロンプトはPromptsタブに移動 */}
                         <PanelSectionRow>
                             <ToggleField
                                 label="Text Parallel API Calls"

@@ -1,0 +1,277 @@
+// src/tabs/TabPrompts.tsx - プロンプト設定タブ（共通 + ゲーム別、Text + Vision）
+
+import {
+    PanelSection,
+    PanelSectionRow,
+    Field,
+    Focusable,
+    Router
+} from "@decky/ui";
+import { call } from "@decky/api";
+
+import { VFC, useState, useEffect } from "react";
+import { useSettings } from "../SettingsContext";
+
+// textarea共通スタイル
+const textareaStyle: React.CSSProperties = {
+    width: "100%",
+    backgroundColor: "#3d4450",
+    color: "#dcdedf",
+    border: "1px solid #4c5564",
+    borderRadius: "4px",
+    padding: "8px",
+    fontSize: "13px",
+    lineHeight: "1.5",
+    resize: "vertical",
+    fontFamily: "inherit",
+};
+
+// プロンプト編集ブロック
+const PromptEditor: VFC<{
+    label: string;
+    value: string;
+    filePath?: string;
+    placeholder?: string;
+    onChange: (value: string) => void;
+    onBlur: () => void;
+}> = ({ label, value, filePath, placeholder, onChange, onBlur }) => (
+    <PanelSectionRow>
+        <Field label={label} childrenContainerWidth="max">
+            <Focusable onBlur={onBlur}>
+                <textarea
+                    value={value}
+                    onChange={(e) => onChange(e.target.value)}
+                    rows={6}
+                    style={textareaStyle}
+                    placeholder={placeholder}
+                />
+            </Focusable>
+            {filePath && (
+                <div style={{ color: "#8b929a", fontSize: "11px", marginTop: "4px", wordBreak: "break-all" }}>
+                    {filePath}
+                </div>
+            )}
+            <div style={{ color: "#8b929a", fontSize: "11px", marginTop: "2px" }}>
+                SSH編集可。フォーカスアウトで保存。
+            </div>
+        </Field>
+    </PanelSectionRow>
+);
+
+export const TabPrompts: VFC = () => {
+    const { settings } = useSettings();
+
+    // 共通プロンプト状態
+    const [commonTextContent, setCommonTextContent] = useState("");
+    const [commonTextPath, setCommonTextPath] = useState("");
+    const [commonTextSaved, setCommonTextSaved] = useState("");
+    const [commonVisionContent, setCommonVisionContent] = useState("");
+    const [commonVisionPath, setCommonVisionPath] = useState("");
+    const [commonVisionSaved, setCommonVisionSaved] = useState("");
+
+    // ゲーム別プロンプト状態
+    const [gameInfo, setGameInfo] = useState<{
+        appId: number;
+        displayName: string;
+    } | null>(null);
+    const [gameTextContent, setGameTextContent] = useState("");
+    const [gameTextPath, setGameTextPath] = useState("");
+    const [gameTextSaved, setGameTextSaved] = useState("");
+    const [gameVisionContent, setGameVisionContent] = useState("");
+    const [gameVisionPath, setGameVisionPath] = useState("");
+    const [gameVisionSaved, setGameVisionSaved] = useState("");
+
+    // 共通プロンプト読み込み
+    useEffect(() => {
+        if (settings.translationProvider !== 'llm') return;
+
+        call<any>('get_common_text_prompt').then(result => {
+            if (result) {
+                setCommonTextContent(result.content || "");
+                setCommonTextPath(result.file_path || "");
+                setCommonTextSaved(result.content || "");
+            }
+        });
+
+        call<any>('get_common_vision_prompt').then(result => {
+            if (result) {
+                setCommonVisionContent(result.content || "");
+                setCommonVisionPath(result.file_path || "");
+                setCommonVisionSaved(result.content || "");
+            }
+        });
+    }, [settings.translationProvider]);
+
+    // ゲーム別プロンプト読み込み
+    useEffect(() => {
+        if (settings.translationProvider !== 'llm') return;
+
+        const mainApp = Router.MainRunningApp;
+        if (!mainApp?.appid) {
+            setGameInfo(null);
+            return;
+        }
+
+        const appId = Number(mainApp.appid);
+        const displayName = mainApp.display_name || "";
+
+        setGameInfo({ appId, displayName });
+
+        call<any>('ensure_game_text_prompt_file', appId, displayName).then(result => {
+            if (result && !result.error) {
+                setGameTextContent(result.content || "");
+                setGameTextPath(result.file_path || "");
+                setGameTextSaved(result.content || "");
+            }
+        });
+
+        call<any>('ensure_game_vision_prompt_file', appId, displayName).then(result => {
+            if (result && !result.error) {
+                setGameVisionContent(result.content || "");
+                setGameVisionPath(result.file_path || "");
+                setGameVisionSaved(result.content || "");
+            }
+        });
+    }, [settings.translationProvider]);
+
+    // 保存ハンドラ
+    const saveCommonText = () => {
+        if (commonTextContent !== commonTextSaved) {
+            call('save_common_text_prompt', commonTextContent);
+            setCommonTextSaved(commonTextContent);
+        }
+    };
+    const saveCommonVision = () => {
+        if (commonVisionContent !== commonVisionSaved) {
+            call('save_common_vision_prompt', commonVisionContent);
+            setCommonVisionSaved(commonVisionContent);
+        }
+    };
+    const saveGameText = () => {
+        if (gameInfo && gameTextContent !== gameTextSaved) {
+            call('save_game_text_prompt', gameInfo.appId, gameTextContent);
+            setGameTextSaved(gameTextContent);
+        }
+    };
+    const saveGameVision = () => {
+        if (gameInfo && gameVisionContent !== gameVisionSaved) {
+            call('save_game_vision_prompt', gameInfo.appId, gameVisionContent);
+            setGameVisionSaved(gameVisionContent);
+        }
+    };
+
+    // LLMプロバイダー未選択時
+    if (settings.translationProvider !== 'llm') {
+        return (
+            <div style={{ marginLeft: "-8px", marginRight: "-8px", paddingBottom: "40px" }}>
+                <PanelSection title="Prompts">
+                    <PanelSectionRow>
+                        <Field focusable={true} childrenContainerWidth="max">
+                            <div style={{ color: "#8b929a", fontSize: "12px", lineHeight: "1.6" }}>
+                                <div>Prompt settings are only available with the LLM translation provider.</div>
+                                <div style={{ marginTop: "4px" }}>Select "LLM (OpenAI-compatible)" in the Translation tab.</div>
+                            </div>
+                        </Field>
+                    </PanelSectionRow>
+                </PanelSection>
+            </div>
+        );
+    }
+
+    return (
+        <div style={{ marginLeft: "-8px", marginRight: "-8px", paddingBottom: "40px" }}>
+            {/* 共通Text指示 */}
+            <PanelSection title="Common Text Instructions">
+                <PanelSectionRow>
+                    <Field focusable={true} childrenContainerWidth="max">
+                        <div style={{ color: "#8b929a", fontSize: "12px", lineHeight: "1.6" }}>
+                            All games, text translation. e.g. abbreviation rules, tone, terminology.
+                        </div>
+                    </Field>
+                </PanelSectionRow>
+                <PromptEditor
+                    label="Text Instructions"
+                    value={commonTextContent}
+                    filePath={commonTextPath}
+                    placeholder="Keep HP, MP, EXP unchanged. Translate UI labels concisely..."
+                    onChange={setCommonTextContent}
+                    onBlur={saveCommonText}
+                />
+            </PanelSection>
+
+            {/* 共通Vision指示 */}
+            {settings.visionMode !== 'off' && (
+                <PanelSection title="Common Vision Instructions">
+                    <PanelSectionRow>
+                        <Field focusable={true} childrenContainerWidth="max">
+                            <div style={{ color: "#8b929a", fontSize: "12px", lineHeight: "1.6" }}>
+                                All games, vision translation. e.g. ignore edge UI, focus on dialog.
+                            </div>
+                        </Field>
+                    </PanelSectionRow>
+                    <PromptEditor
+                        label="Vision Instructions"
+                        value={commonVisionContent}
+                        filePath={commonVisionPath}
+                        placeholder="Ignore HUD numbers. Focus on dialog text. Ignore screen-edge UI..."
+                        onChange={setCommonVisionContent}
+                        onBlur={saveCommonVision}
+                    />
+                </PanelSection>
+            )}
+
+            {/* ゲーム別プロンプト */}
+            {gameInfo ? (
+                <>
+                    <PanelSection title={`Game: ${gameInfo.displayName}`}>
+                        <PanelSectionRow>
+                            <Field focusable={true} childrenContainerWidth="max">
+                                <div style={{ color: "#8b929a", fontSize: "12px", lineHeight: "1.6" }}>
+                                    App ID: {gameInfo.appId}
+                                </div>
+                            </Field>
+                        </PanelSectionRow>
+                        <PromptEditor
+                            label="Game Text Instructions"
+                            value={gameTextContent}
+                            filePath={gameTextPath}
+                            placeholder="Glossary and tone for this game's text translation..."
+                            onChange={setGameTextContent}
+                            onBlur={saveGameText}
+                        />
+                        {settings.visionMode !== 'off' && (
+                            <PromptEditor
+                                label="Game Vision Instructions"
+                                value={gameVisionContent}
+                                filePath={gameVisionPath}
+                                placeholder="Vision-specific instructions for this game..."
+                                onChange={setGameVisionContent}
+                                onBlur={saveGameVision}
+                            />
+                        )}
+                    </PanelSection>
+                </>
+            ) : (
+                <PanelSection title="Game-Specific">
+                    <PanelSectionRow>
+                        <Field focusable={true} childrenContainerWidth="max">
+                            <div style={{ color: "#8b929a", fontSize: "12px", lineHeight: "1.6" }}>
+                                No game running. Launch a game to configure game-specific prompts.
+                            </div>
+                        </Field>
+                    </PanelSectionRow>
+                </PanelSection>
+            )}
+
+            {/* スクロール用スペーサー */}
+            <PanelSection>
+                <PanelSectionRow>
+                    <Focusable
+                        style={{ height: "1px", opacity: 0 }}
+                        onActivate={() => {}}
+                    />
+                </PanelSectionRow>
+            </PanelSection>
+        </div>
+    );
+};

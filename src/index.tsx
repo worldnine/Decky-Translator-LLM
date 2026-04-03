@@ -28,7 +28,7 @@ import { SettingsProvider, useSettings } from "./SettingsContext";
 import { logger } from "./Logger";
 
 // Import tab components
-import { TabMain, TabTranslation, TabGamePrompt, TabControls } from "./tabs";
+import { TabMain, TabTranslation, TabPrompts, TabControls } from "./tabs";
 
 // SVG Icons for tabs
 const IconTranslate = () => (
@@ -177,8 +177,8 @@ const GameTranslator: VFC<{ logic: GameTranslatorLogic }> = ({ logic }) => {
                         {
                             // @ts-ignore
                             title: <IconGamePrompt />,
-                            content: <TabGamePrompt />,
-                            id: "gameprompt",
+                            content: <TabPrompts />,
+                            id: "prompts",
                         },
                         {
                             // @ts-ignore
