@@ -39,7 +39,41 @@ export class TextTranslator {
         return this.inputLanguage;
     }
 
-    async translateText(textRegions: TextRegion[]): Promise<TranslatedRegion[]> {
+    async visionTranslate(imageData: string): Promise<TranslatedRegion[] | null> {
+        try {
+            const response = await call<[string, string, string], TranslatedRegion[] | ErrorResponse | null>(
+                'vision_translate',
+                imageData,
+                this.targetLanguage,
+                this.inputLanguage,
+            );
+
+            if (!response) return null;
+
+            if (isErrorResponse(response)) {
+                const errorResponse = response as ErrorResponse;
+                if (errorResponse.error === 'network_error') {
+                    throw new NetworkError(errorResponse.message);
+                }
+                if (errorResponse.error === 'api_key_error') {
+                    throw new ApiKeyError(errorResponse.message);
+                }
+                // vision_failed等 → nullでフォールバック
+                logger.warn('TextTranslator', `Vision translate error: ${errorResponse.error} - ${errorResponse.message}`);
+                return null;
+            }
+
+            return response as TranslatedRegion[];
+        } catch (error) {
+            if (error instanceof NetworkError || error instanceof ApiKeyError) {
+                throw error;
+            }
+            logger.warn('TextTranslator', 'Vision translate failed', error);
+            return null;
+        }
+    }
+
+    async translateText(textRegions: TextRegion[], imageData?: string): Promise<TranslatedRegion[]> {
         try {
             // Skip translation if there's nothing to translate
             if (!textRegions.length) {
@@ -47,11 +81,13 @@ export class TextTranslator {
             }
 
             // Call the Python backend method for translation, now including input language
-            const response = await call<TranslatedRegion[] | ErrorResponse>(
+            // 画像再認識用にimage_dataも渡す（バックエンドで必要かどうかを判断）
+            const response = await call<[TextRegion[], string, string, string | null], TranslatedRegion[] | ErrorResponse | null>(
                 'translate_text',
                 textRegions,
                 this.targetLanguage,
-                this.inputLanguage
+                this.inputLanguage,
+                imageData || null
             );
 
             if (response) {

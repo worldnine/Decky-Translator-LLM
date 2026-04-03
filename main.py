@@ -81,11 +81,19 @@ import requests
 
 # Import provider system
 from providers import ProviderManager, TextRegion, NetworkError, ApiKeyError, RateLimitError
+from migration import (
+    normalize_gemini_setting,
+    extract_prompt_from_content,
+    migrate_llm_system_prompt,
+    ensure_vision_common_file,
+    migrate_old_game_prompt,
+)
 
 _processing_lock = False
 
 # Get environment variable
 settingsDir = os.environ.get("DECKY_PLUGIN_SETTINGS_DIR", "/home/deck/homebrew/settings")
+DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 # Set up logging
 logger = decky_plugin.logger
@@ -880,19 +888,36 @@ class Plugin:
     _google_vision_api_key: str = ""
     _google_translate_api_key: str = ""
 
-    # LLM翻訳プロバイダー設定
-    _llm_base_url: str = ""
-    _llm_api_key: str = ""
-    _llm_model: str = ""
-    _llm_system_prompt: str = ""
-    _llm_disable_thinking: bool = True
+    # Gemini設定
+    _gemini_base_url: str = ""
+    _gemini_api_key: str = ""
+    _gemini_model: str = ""
+    _gemini_disable_thinking: bool = True
+    _gemini_parallel: bool = True
+
+    # 既存 Vision 実装へ流し込む内部状態
+    _vision_llm_base_url: str = ""
+    _vision_llm_api_key: str = ""
+    _vision_llm_model: str = ""
+    _vision_llm_disable_thinking: bool = True
+    _vision_llm_parallel: bool = True
+    _vision_mode: str = "direct"
+    _vision_coordinate_mode: str = "pixel"
+
+    # ゲーム別プロンプト（現在適用中）
+    _current_game_vision_prompt: str = ""
 
     # Generic settings handlers
     async def get_setting(self, key, default=None):
         return self._settings.get_setting(key, default)
 
+    def _effective_gemini_base_url(self) -> str:
+        """設定未入力時は公式 Gemini エンドポイントを使う。"""
+        return self._gemini_base_url or DEFAULT_GEMINI_BASE_URL
+
     async def set_setting(self, key, value):
         logger.debug(f"Setting {key} to: {value}")
+        setting_key = key
         try:
             if key == "target_language":
                 self._target_language = value
@@ -962,66 +987,267 @@ class Plugin:
                 pass  # frontend-only, just persist to settings file
             elif key == "debug_mode":
                 logger.setLevel(logging.DEBUG if value else logging.INFO)
-            elif key == "use_free_providers":
-                self._use_free_providers = value
-                # Update provider manager configuration (backwards compatibility)
+            elif key in ("gemini_base_url", "vision_llm_base_url", "text_llm_base_url", "llm_base_url"):
+                self._gemini_base_url = value
+                self._vision_llm_base_url = self._effective_gemini_base_url()
+                setting_key = "gemini_base_url"
                 if self._provider_manager:
-                    self._provider_manager.configure(
-                        use_free_providers=value,
-                        google_api_key=self._google_vision_api_key,
-                        ocr_provider=self._ocr_provider,
-                        translation_provider=self._translation_provider
+                    self._provider_manager.configure_vision(
+                        mode="direct",
+                        base_url=self._effective_gemini_base_url(),
                     )
-            elif key == "ocr_provider":
-                self._ocr_provider = value
-                # Derive use_free_providers for backwards compatibility
-                self._use_free_providers = (value != "googlecloud")
-                # Update provider manager configuration
+            elif key in ("gemini_api_key", "vision_llm_api_key", "text_llm_api_key", "llm_api_key"):
+                self._gemini_api_key = value
+                self._vision_llm_api_key = value
+                setting_key = "gemini_api_key"
                 if self._provider_manager:
-                    self._provider_manager.configure(
-                        use_free_providers=self._use_free_providers,
-                        google_api_key=self._google_vision_api_key,
-                        ocr_provider=value,
-                        translation_provider=self._translation_provider
+                    self._provider_manager.configure_vision(
+                        mode="direct",
+                        api_key=value,
                     )
-            elif key == "translation_provider":
-                self._translation_provider = value
-                # Update provider manager configuration
+            elif key in ("gemini_model", "vision_llm_model", "text_llm_model", "llm_model"):
+                self._gemini_model = value
+                self._vision_llm_model = value
+                setting_key = "gemini_model"
                 if self._provider_manager:
-                    self._provider_manager.configure(
-                        use_free_providers=self._use_free_providers,
-                        google_api_key=self._google_vision_api_key,
-                        ocr_provider=self._ocr_provider,
-                        translation_provider=value
+                    self._provider_manager.configure_vision(
+                        mode="direct",
+                        model=value,
                     )
-            elif key == "llm_base_url":
-                self._llm_base_url = value
+            elif key in ("gemini_disable_thinking", "vision_llm_disable_thinking", "text_llm_disable_thinking", "llm_disable_thinking"):
+                self._gemini_disable_thinking = bool(value)
+                self._vision_llm_disable_thinking = bool(value)
+                setting_key = "gemini_disable_thinking"
                 if self._provider_manager:
-                    self._provider_manager.configure_llm(base_url=value)
-            elif key == "llm_api_key":
-                self._llm_api_key = value
+                    self._provider_manager.configure_vision(
+                        mode="direct",
+                        disable_thinking=bool(value),
+                    )
+            elif key in ("gemini_parallel", "vision_llm_parallel", "text_llm_parallel", "vision_parallel", "llm_parallel"):
+                self._gemini_parallel = bool(value)
+                self._vision_llm_parallel = bool(value)
+                setting_key = "gemini_parallel"
                 if self._provider_manager:
-                    self._provider_manager.configure_llm(api_key=value)
-            elif key == "llm_model":
-                self._llm_model = value
-                if self._provider_manager:
-                    self._provider_manager.configure_llm(model=value)
+                    self._provider_manager.configure_vision(
+                        mode="direct",
+                        parallel=bool(value),
+                    )
             elif key == "llm_system_prompt":
-                self._llm_system_prompt = value
-                if self._provider_manager:
-                    self._provider_manager.configure_llm(system_prompt=value)
-            elif key == "llm_disable_thinking":
-                self._llm_disable_thinking = value
-                if self._provider_manager:
-                    self._provider_manager.configure_llm(disable_thinking=value)
+                logger.warning("llm_system_prompt は廃止されました。Prompts タブから Gemini prompt を編集してください。")
+            elif key in (
+                "use_free_providers",
+                "ocr_provider",
+                "translation_provider",
+                "vision_mode",
+                "vision_assist_confidence_threshold",
+                "vision_assist_send_all",
+                "llm_image_rerecognition",
+                "llm_image_send_all",
+                "llm_image_confidence_threshold",
+            ):
+                logger.info(f"{key} は Gemini専用構成では未使用です")
             else:
                 logger.warning(f"Unknown setting key: {key}")
 
-            return self._settings.set_setting(key, value)
+            return self._settings.set_setting(setting_key, value)
         except Exception as e:
             logger.error(f"Error setting {key}: {str(e)}")
             logger.error(traceback.format_exc())
             return False
+
+    # プロンプトファイル機能
+
+    def _ensure_vision_common_prompt_file(self):
+        """vision-common.txt が存在しない場合、空ファイルを生成する。
+        ファイルが存在すればその内容を読み込んで適用する。
+        暗黙の意味論注入は行わない — ユーザーが明示的に書いた内容のみ適用。"""
+        prompts_dir = self._get_prompts_dir()
+        content = ensure_vision_common_file(prompts_dir)
+        self._apply_common_vision_prompt(content)
+
+    def _get_prompts_dir(self):
+        """共通プロンプトファイルの保存ディレクトリを返す"""
+        return os.path.join(settingsDir, "decky-translator-prompts")
+
+    def _get_games_dir(self):
+        """ゲーム別プロンプトファイルの保存ディレクトリを返す"""
+        return os.path.join(settingsDir, "decky-translator-games")
+
+    def _extract_prompt_from_content(self, content: str) -> str:
+        """ファイル内容から1行目のメタ行を除去し、プロンプト部分のみ返す。"""
+        return extract_prompt_from_content(content)
+
+    def _apply_game_text_prompt(self, game_prompt: str):
+        """旧互換。Gemini用ゲーム別 prompt と同じ内容を適用する。"""
+        self._apply_game_vision_prompt(game_prompt)
+
+    def _apply_game_vision_prompt(self, game_prompt: str):
+        """ゲーム別 Gemini prompt をVision実装へ適用する"""
+        self._current_game_vision_prompt = game_prompt
+        if self._provider_manager:
+            self._provider_manager.configure_vision(mode="direct", game_prompt=game_prompt)
+
+    def _reload_common_prompts(self):
+        """共通 Gemini prompt を再読み込みして適用する。"""
+        prompts_dir = self._get_prompts_dir()
+        vision_path = os.path.join(prompts_dir, "vision-common.txt")
+        if os.path.exists(vision_path):
+            with open(vision_path, 'r', encoding='utf-8-sig') as f:
+                self._apply_common_vision_prompt(f.read().strip())
+
+    def _apply_common_text_prompt(self, prompt: str):
+        """旧互換。Gemini用共通 prompt と同じ内容を適用する。"""
+        self._apply_common_vision_prompt(prompt)
+
+    def _apply_common_vision_prompt(self, prompt: str):
+        """共通 Gemini prompt をVision実装へ適用する"""
+        if self._provider_manager:
+            self._provider_manager.configure_vision(mode="direct", system_prompt=prompt)
+
+    # --- 共通プロンプト API ---
+
+    async def get_common_text_prompt(self):
+        """旧互換。共通 Gemini prompt を返す。"""
+        return await self.get_common_vision_prompt()
+
+    async def save_common_text_prompt(self, content: str):
+        """旧互換。共通 Gemini prompt を保存する。"""
+        return await self.save_common_vision_prompt(content)
+
+    async def get_common_vision_prompt(self):
+        """共通Vision プロンプトの読み込み"""
+        try:
+            prompts_dir = self._get_prompts_dir()
+            file_path = os.path.join(prompts_dir, "vision-common.txt")
+            if not os.path.exists(file_path):
+                return {"exists": False, "file_path": file_path, "content": ""}
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
+                content = f.read()
+            return {"exists": True, "file_path": file_path, "content": content}
+        except Exception as e:
+            logger.error(f"共通Vision プロンプトの読み込みに失敗: {e}")
+            return {"exists": False, "error": str(e)}
+
+    async def save_common_vision_prompt(self, content: str):
+        """共通Vision プロンプトの保存と適用"""
+        try:
+            prompts_dir = self._get_prompts_dir()
+            os.makedirs(prompts_dir, exist_ok=True)
+            file_path = os.path.join(prompts_dir, "vision-common.txt")
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            logger.info("共通Vision プロンプトを保存")
+            self._apply_common_vision_prompt(content.strip())
+            return True
+        except Exception as e:
+            logger.error(f"共通Vision プロンプトの保存に失敗: {e}")
+            logger.error(traceback.format_exc())
+            return False
+
+    # --- ゲーム別プロンプト API ---
+
+    def _migrate_old_game_prompt(self, app_id: int):
+        """旧形式のゲーム別 prompt を {app_id}/vision.txt へ移行する。"""
+        migrate_old_game_prompt(self._get_games_dir(), app_id)
+
+    async def ensure_game_text_prompt_file(self, app_id: int, display_name: str):
+        """旧互換。ゲーム別 Gemini prompt を返す。"""
+        return await self.ensure_game_vision_prompt_file(app_id, display_name)
+
+    async def ensure_game_vision_prompt_file(self, app_id: int, display_name: str):
+        """ゲーム別Vision プロンプトファイルを確保し、内容を読み込んで適用する"""
+        try:
+            games_dir = self._get_games_dir()
+            game_dir = os.path.join(games_dir, str(app_id))
+            os.makedirs(game_dir, exist_ok=True)
+            self._migrate_old_game_prompt(app_id)
+            file_path = os.path.join(game_dir, "vision.txt")
+
+            if not os.path.exists(file_path):
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(f"--- {display_name} (App ID: {app_id}) Vision ---\n")
+                logger.info(f"ゲーム別Vision プロンプトファイルを作成: {file_path}")
+
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
+                content = f.read()
+
+            prompt = self._extract_prompt_from_content(content)
+            self._apply_game_vision_prompt(prompt)
+
+            return {
+                "app_id": app_id,
+                "display_name": display_name,
+                "file_path": file_path,
+                "content": content,
+                "prompt": prompt,
+            }
+        except Exception as e:
+            logger.error(f"ゲーム別Vision プロンプトファイルの処理に失敗: {e}")
+            logger.error(traceback.format_exc())
+            return {"app_id": app_id, "error": str(e)}
+
+    async def get_game_text_prompt(self, app_id: int):
+        """旧互換。ゲーム別 Gemini prompt を返す。"""
+        return await self.get_game_vision_prompt(app_id)
+
+    async def get_game_vision_prompt(self, app_id: int):
+        """ゲーム別Vision プロンプトファイルの内容を返す"""
+        try:
+            games_dir = self._get_games_dir()
+            self._migrate_old_game_prompt(app_id)
+            file_path = os.path.join(games_dir, str(app_id), "vision.txt")
+            if not os.path.exists(file_path):
+                return {"exists": False, "app_id": app_id}
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
+                content = f.read()
+            prompt = self._extract_prompt_from_content(content)
+            return {
+                "exists": True,
+                "app_id": app_id,
+                "file_path": file_path,
+                "content": content,
+                "prompt": prompt,
+            }
+        except Exception as e:
+            logger.error(f"ゲーム別Vision プロンプトの読み込みに失敗: {e}")
+            return {"exists": False, "app_id": app_id, "error": str(e)}
+
+    async def save_game_text_prompt(self, app_id: int, content: str):
+        """旧互換。ゲーム別 Gemini prompt を保存する。"""
+        return await self.save_game_vision_prompt(app_id, content)
+
+    async def save_game_vision_prompt(self, app_id: int, content: str):
+        """ゲーム別Vision プロンプトファイルを保存し、プロンプトを再適用する"""
+        try:
+            games_dir = self._get_games_dir()
+            game_dir = os.path.join(games_dir, str(app_id))
+            os.makedirs(game_dir, exist_ok=True)
+            self._migrate_old_game_prompt(app_id)
+            file_path = os.path.join(game_dir, "vision.txt")
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            logger.info(f"ゲーム別Vision プロンプトを保存: app_id={app_id}")
+            prompt = self._extract_prompt_from_content(content)
+            self._apply_game_vision_prompt(prompt)
+            return True
+        except Exception as e:
+            logger.error(f"ゲーム別Vision プロンプトの保存に失敗: {e}")
+            logger.error(traceback.format_exc())
+            return False
+
+    # --- 後方互換: 旧 API ---
+
+    async def ensure_game_prompt_file(self, app_id: int, display_name: str):
+        """旧API互換: ゲーム別 Gemini prompt ファイルを確保する。"""
+        return await self.ensure_game_vision_prompt_file(app_id, display_name)
+
+    async def get_game_prompt(self, app_id: int):
+        """旧API互換: ゲーム別 Gemini prompt を返す。"""
+        return await self.get_game_vision_prompt(app_id)
+
+    async def save_game_prompt(self, app_id: int, content: str):
+        """旧API互換: ゲーム別 Gemini prompt を保存する。"""
+        return await self.save_game_vision_prompt(app_id, content)
 
     async def get_all_settings(self):
         try:
@@ -1030,18 +1256,8 @@ class Plugin:
                 "input_language": self._input_language,
                 "input_mode": self._input_mode,
                 "enabled": self._settings.get_setting("enabled", True),
-                "use_free_providers": self._use_free_providers,
-                "ocr_provider": self._ocr_provider,
-                "translation_provider": self._translation_provider,
-                "google_api_key": self._google_vision_api_key,  # Single key for frontend
-                "google_vision_api_key": self._google_vision_api_key,
-                "google_translate_api_key": self._google_translate_api_key,
                 "hold_time_translate": self._settings.get_setting("hold_time_translate", 1000),
                 "hold_time_dismiss": self._settings.get_setting("hold_time_dismiss", 500),
-                "confidence_threshold": self._settings.get_setting("confidence_threshold", 0.6),
-                "rapidocr_confidence": self._settings.get_setting("rapidocr_confidence", 0.5),
-                "rapidocr_box_thresh": self._settings.get_setting("rapidocr_box_thresh", 0.5),
-                "rapidocr_unclip_ratio": self._settings.get_setting("rapidocr_unclip_ratio", 1.6),
                 "pause_game_on_overlay": self._settings.get_setting("pause_game_on_overlay", False),
                 "quick_toggle_enabled": self._settings.get_setting("quick_toggle_enabled", False),
                 "debug_mode": self._settings.get_setting("debug_mode", False),
@@ -1049,12 +1265,9 @@ class Plugin:
                 "grouping_power": self._settings.get_setting("grouping_power", 0.25),
                 "hide_identical_translations": self._settings.get_setting("hide_identical_translations", False),
                 "allow_label_growth": self._settings.get_setting("allow_label_growth", False),
-                "custom_recognition_settings": self._settings.get_setting("custom_recognition_settings", False),
-                "llm_base_url": self._llm_base_url,
-                "llm_api_key": self._llm_api_key,
-                "llm_model": self._llm_model,
-                "llm_system_prompt": self._llm_system_prompt,
-                "llm_disable_thinking": self._llm_disable_thinking,
+                "gemini_base_url": self._gemini_base_url,
+                "gemini_api_key": self._gemini_api_key,
+                "gemini_model": self._gemini_model,
             }
             return settings
         except Exception as e:
@@ -1465,8 +1678,23 @@ class Plugin:
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to delete temporary screenshot: {cleanup_error}")
 
-    async def translate_text(self, text_regions, target_language=None, input_language=None):
+    async def delete_screenshot(self, image_path: str):
+        """一時スクリーンショットファイルを削除する。Vision direct経路など、
+        recognize_text_file を経由しない場合に使用。"""
+        if image_path and os.path.exists(image_path):
+            try:
+                os.remove(image_path)
+                logger.debug(f"Deleted temporary screenshot: {image_path}")
+                return True
+            except Exception as e:
+                logger.warning(f"Failed to delete temporary screenshot: {e}")
+                return False
+        return True
+
+    async def translate_text(self, text_regions, target_language=None, input_language=None, image_data=None):
         try:
+            # SSH編集対応: 翻訳前に共通プロンプトを再読み込み
+            self._reload_common_prompts()
             if not text_regions:
                 return []
 
@@ -1483,7 +1711,9 @@ class Plugin:
             translated_texts = await self._provider_manager.translate_text(
                 texts_to_translate,
                 source_lang=input_lang,
-                target_lang=target_lang
+                target_lang=target_lang,
+                text_regions=text_regions,
+                image_bytes=None,
             )
             logger.info(f"Translation completed in {time.time() - start_time:.2f}s, {len(texts_to_translate)} regions")
 
@@ -1507,6 +1737,106 @@ class Plugin:
             logger.error(f"Translation error: {e}")
             logger.error(traceback.format_exc())
             return None
+
+    async def preflight_vision_check(self, mode: str = None):
+        """Vision Translationの事前検証RPC。Vision+JSON対応のみ確認。
+        mode引数でoff→direct等の遷移前検証を可能にする。"""
+        try:
+            if not self._provider_manager:
+                return {"ok": False, "message": "Provider manager not initialized"}
+            return await self._provider_manager.preflight_vision_check(mode=mode)
+        except Exception as e:
+            logger.error(f"Vision preflight error: {e}")
+            logger.error(traceback.format_exc())
+            return {"ok": False, "message": str(e)}
+
+    async def vision_translate(self, image_data, target_language=None, input_language=None):
+        """Vision Translation: スクリーンショットから直接テキスト検出+翻訳。OCRバイパス。"""
+        try:
+            # SSH編集対応: 翻訳前に共通プロンプトを再読み込み
+            self._reload_common_prompts()
+            if not image_data:
+                return {"error": "vision_failed", "message": "No image data"}
+
+            target_lang = target_language or self._target_language
+            input_lang = input_language or self._input_language
+
+            if not self._provider_manager:
+                return {"error": "vision_failed", "message": "Provider manager not initialized"}
+
+            # Base64デコード
+            img_str = image_data
+            if img_str.startswith('data:image'):
+                img_str = img_str.split(',', 1)[1]
+            image_bytes = base64.b64decode(img_str)
+
+            # 画像サイズ取得（システムPythonサブプロセス）
+            image_width, image_height = await self._get_image_size(image_bytes)
+            if not image_width or not image_height:
+                return {"error": "vision_failed", "message": "Failed to get image dimensions"}
+
+            start_time = time.time()
+            result = await self._provider_manager.recognize_and_translate(
+                image_bytes, input_lang, target_lang,
+                image_width, image_height,
+            )
+            elapsed = time.time() - start_time
+
+            if result is None:
+                logger.warning(f"Vision Translation失敗 ({elapsed:.2f}s)")
+                return {"error": "vision_failed", "message": "Vision translation returned no results"}
+
+            logger.info(f"Vision Translation完了: {len(result)} regions in {elapsed:.2f}s")
+            return result
+
+        except NetworkError as e:
+            logger.error(f"Network error during vision translation: {e}")
+            return {"error": "network_error", "message": str(e)}
+        except ApiKeyError as e:
+            logger.error(f"API key error during vision translation: {e}")
+            return {"error": "api_key_error", "message": "Invalid API key"}
+        except Exception as e:
+            logger.error(f"Vision translation error: {e}")
+            logger.error(traceback.format_exc())
+            return {"error": "vision_failed", "message": str(e)}
+
+    async def _get_image_size(self, image_bytes: bytes) -> tuple:
+        """画像バイトデータからサイズ(width, height)を取得する。
+        PILが使えないDecky環境のため、PNGヘッダから直接読み取る。"""
+        try:
+            import struct
+            # PNGシグネチャ確認
+            if image_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+                # IHDRチャンクからwidth, height取得（オフセット16-24）
+                width = struct.unpack('>I', image_bytes[16:20])[0]
+                height = struct.unpack('>I', image_bytes[20:24])[0]
+                logger.debug(f"Image size from PNG header: {width}x{height}")
+                return width, height
+
+            # PNG以外の場合はサブプロセスでPIL使用
+            import subprocess
+            python_path = ""
+            for path in ['/usr/bin/python3', '/usr/bin/python3.13', '/usr/local/bin/python3']:
+                import os
+                if os.path.exists(path) and os.access(path, os.X_OK):
+                    python_path = path
+                    break
+            if not python_path:
+                logger.error("システムPythonが見つかりません")
+                return (None, None)
+
+            script = "import sys,io;from PIL import Image;d=sys.stdin.buffer.read();i=Image.open(io.BytesIO(d));print(f'{i.size[0]} {i.size[1]}')"
+            result = subprocess.run(
+                [python_path, '-S', '-c', script],
+                input=image_bytes, capture_output=True, timeout=5,
+            )
+            if result.returncode == 0:
+                parts = result.stdout.decode().strip().split()
+                return int(parts[0]), int(parts[1])
+            return (None, None)
+        except Exception as e:
+            logger.error(f"画像サイズ取得エラー: {e}")
+            return (None, None)
 
     async def get_enabled_state(self):
         return await self.get_setting("enabled", True)
@@ -1672,30 +2002,29 @@ class Plugin:
                 self._google_vision_api_key = google_api_key
                 self._google_translate_api_key = google_api_key
 
-            saved_ocr_provider = self._settings.get_setting("ocr_provider")
-            if saved_ocr_provider is not None:
-                self._ocr_provider = saved_ocr_provider
-                self._use_free_providers = (saved_ocr_provider != "googlecloud")
-            else:
-                self._settings.set_setting("ocr_provider", self._ocr_provider)
+            # 互換RPC用の旧プロバイダー設定は固定既定値のまま残す。
+            # UIからは到達しないため、旧設定ファイルの provider 選択値は読み戻さない。
 
-            # Load translation provider
-            saved_translation_provider = self._settings.get_setting("translation_provider")
-            if saved_translation_provider is not None:
-                self._translation_provider = saved_translation_provider
-            else:
-                if self._ocr_provider == "googlecloud":
-                    self._translation_provider = "googlecloud"
-                else:
-                    self._translation_provider = "freegoogle"
-                self._settings.set_setting("translation_provider", self._translation_provider)
-
-            # LLM翻訳プロバイダー設定を読み込み
-            self._llm_base_url = self._settings.get_setting("llm_base_url", "")
-            self._llm_api_key = self._settings.get_setting("llm_api_key", "")
-            self._llm_model = self._settings.get_setting("llm_model", "")
-            self._llm_system_prompt = self._settings.get_setting("llm_system_prompt", "")
-            self._llm_disable_thinking = self._settings.get_setting("llm_disable_thinking", True)
+            # Gemini設定を読み込み（gemini_* > vision_llm_* > text_llm_* > llm_* の順でフォールバック）
+            getter = self._settings.get_setting
+            self._gemini_base_url = normalize_gemini_setting(getter, "base_url", default="")
+            self._gemini_api_key = normalize_gemini_setting(getter, "api_key", default="")
+            self._gemini_model = normalize_gemini_setting(getter, "model", default="")
+            self._gemini_disable_thinking = normalize_gemini_setting(getter, "disable_thinking", default=True)
+            self._gemini_parallel = normalize_gemini_setting(getter, "parallel", default=True)
+            self._vision_mode = "direct"
+            self._vision_coordinate_mode = self._settings.get_setting(
+                "vision_coordinate_mode",
+                self._settings.get_setting("llm_coordinate_mode", "pixel")
+            )
+            self._vision_llm_base_url = self._effective_gemini_base_url()
+            self._vision_llm_api_key = self._gemini_api_key
+            self._vision_llm_model = self._gemini_model
+            self._vision_llm_disable_thinking = self._gemini_disable_thinking
+            self._vision_llm_parallel = self._gemini_parallel
+            self._settings.set_setting("gemini_base_url", self._gemini_base_url)
+            self._settings.set_setting("gemini_api_key", self._gemini_api_key)
+            self._settings.set_setting("gemini_model", self._gemini_model)
 
             # Initialize provider manager
             self._provider_manager = ProviderManager()
@@ -1706,15 +2035,24 @@ class Plugin:
                 translation_provider=self._translation_provider
             )
 
-            # LLM設定をプロバイダーマネージャーに適用
-            if self._llm_base_url or self._llm_model:
-                self._provider_manager.configure_llm(
-                    base_url=self._llm_base_url,
-                    api_key=self._llm_api_key,
-                    model=self._llm_model,
-                    system_prompt=self._llm_system_prompt,
-                    disable_thinking=self._llm_disable_thinking,
-                )
+            self._provider_manager.configure_vision(
+                mode="direct",
+                base_url=self._effective_gemini_base_url(),
+                api_key=self._gemini_api_key,
+                model=self._gemini_model,
+                disable_thinking=self._gemini_disable_thinking,
+                parallel=self._gemini_parallel,
+                coordinate_mode=self._vision_coordinate_mode,
+            )
+
+            # 共通 Gemini prompt を読み込んで適用
+            prompts_dir = self._get_prompts_dir()
+
+            # 旧 llm_system_prompt からの移行: ファイルが存在しない場合のみ
+            old_system_prompt = self._settings.get_setting("llm_system_prompt", "")
+            migrate_llm_system_prompt(prompts_dir, old_system_prompt)
+
+            self._ensure_vision_common_prompt_file()
 
             # Load and apply RapidOCR-specific settings
             if self._settings.get_setting("custom_recognition_settings", False):

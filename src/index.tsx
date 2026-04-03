@@ -2,8 +2,7 @@
 
 import {
     definePlugin,
-    routerHook,
-    call
+    routerHook
 } from "@decky/api";
 
 import {
@@ -28,7 +27,7 @@ import { SettingsProvider, useSettings } from "./SettingsContext";
 import { logger } from "./Logger";
 
 // Import tab components
-import { TabMain, TabTranslation, TabControls } from "./tabs";
+import { TabMain, TabTranslation, TabPrompts, TabControls } from "./tabs";
 
 // SVG Icons for tabs
 const IconTranslate = () => (
@@ -43,6 +42,12 @@ const IconLanguage = () => (
     </svg>
 );
 
+const IconGamePrompt = () => (
+    <svg style={{ display: "block" }} width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 10H3V8h18v8zM6 15h2v-2h2v-2H8V9H6v2H4v2h2v2zm9.5-2c.83 0 1.5-.67 1.5-1.5S16.33 10 15.5 10s-1.5.67-1.5 1.5.67 1.5 1.5 1.5zm4 0c.83 0 1.5-.67 1.5-1.5S20.33 10 19.5 10s-1.5.67-1.5 1.5.67 1.5 1.5 1.5z" fill="currentColor"/>
+    </svg>
+);
+
 const IconGear = () => (
     <svg style={{ display: "block" }} width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1115.6 12 3.611 3.611 0 0112 15.6z" fill="currentColor"/>
@@ -54,7 +59,6 @@ const GameTranslator: VFC<{ logic: GameTranslatorLogic }> = ({ logic }) => {
     const { settings, initialized } = useSettings();
     const [overlayVisible, setOverlayVisible] = useState<boolean>(logic.isOverlayVisible());
     const [inputDiagnostics, setInputDiagnostics] = useState<any>(null);
-    const [providerStatus, setProviderStatus] = useState<any>(null);
     const [currentTabRoute, setCurrentTabRoute] = useState<string>("main");
 
     useEffect(() => {
@@ -75,33 +79,6 @@ const GameTranslator: VFC<{ logic: GameTranslatorLogic }> = ({ logic }) => {
             clearInterval(intervalId);
         };
     }, [logic, settings.enabled]);
-
-    // Fetch provider status (including usage stats) when using free providers
-    useEffect(() => {
-        if (!settings.useFreeProviders) {
-            setProviderStatus(null);
-            return;
-        }
-
-        const fetchProviderStatus = async () => {
-            try {
-                const result = await call<any>('get_provider_status');
-                if (result) {
-                    setProviderStatus(result);
-                }
-            } catch (error) {
-                logger.error('GameTranslator', 'Failed to fetch provider status', error);
-            }
-        };
-
-        fetchProviderStatus();
-        // Refresh every 5 seconds for responsive updates
-        const intervalId = setInterval(fetchProviderStatus, 5000);
-
-        return () => {
-            clearInterval(intervalId);
-        };
-    }, [settings.useFreeProviders]);
 
     // Refresh diagnostics while debug mode is on
     useEffect(() => {
@@ -159,7 +136,7 @@ const GameTranslator: VFC<{ logic: GameTranslatorLogic }> = ({ logic }) => {
                         {
                             // @ts-ignore
                             title: <IconTranslate />,
-                            content: <TabMain logic={logic} overlayVisible={overlayVisible} providerStatus={providerStatus} />,
+                            content: <TabMain logic={logic} overlayVisible={overlayVisible} />,
                             id: "main",
                         },
                         {
@@ -167,6 +144,12 @@ const GameTranslator: VFC<{ logic: GameTranslatorLogic }> = ({ logic }) => {
                             title: <IconLanguage />,
                             content: <TabTranslation />,
                             id: "translation",
+                        },
+                        {
+                            // @ts-ignore
+                            title: <IconGamePrompt />,
+                            content: <TabPrompts />,
+                            id: "prompts",
                         },
                         {
                             // @ts-ignore
@@ -293,7 +276,8 @@ export default definePlugin(() => {
     ));
 
     return {
-        title: <div className={staticClasses.Title}>Decky Translator</div>,
+        name: "Translator LLM",
+        title: <div className={staticClasses.Title}>Translator LLM</div>,
         content: <TranslatorApp logic={logic}/>,
         icon: <BsTranslate/>,
         onDismount() {

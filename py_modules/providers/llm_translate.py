@@ -1,42 +1,37 @@
 # providers/llm_translate.py
-# OpenAI API互換のLLM翻訳プロバイダー
+# OpenAI API互換のLLM翻訳プロバイダー（テキスト翻訳専用）
 # Gemini Flash, GPT-4o-mini, DeepSeek, Ollama等に対応
+#
+# Vision関連機能は gemini_vision.py に分離済み
 
 import asyncio
-import json
 import logging
 import re
 from typing import List
 
-import requests
-
-from .base import TranslationProvider, ProviderType, NetworkError, ApiKeyError
+from .base import TranslationProvider, ProviderType
+from .llm_api_client import LlmApiClient
 
 logger = logging.getLogger(__name__)
 
-# ベースのシステムプロンプト（常に使用、言語指定を含む）
-# OCR由来のテキストであることを明示し、エラー修正・略語保護・UIラベル対応を指示
-BASE_SYSTEM_PROMPT = (
+# Text翻訳用の固定プロンプト
+# 役割定義・出力契約・hallucination抑制のみ。ゲーム依存の意味論は含めない。
+# 共通/ゲーム別プロンプトで追加指示を注入する。
+#
+# 注入順: Text固定プロンプト → 共通Text プロンプト → ゲーム別Text プロンプト
+TEXT_FIXED_PROMPT = (
     "You are a game text translator. "
     "The input text was captured from a game screen via OCR and may contain "
     "recognition errors, broken words, or artifacts. "
     "Translate from {source_lang} to {target_lang}. "
     "Correct obvious OCR errors based on context, but do NOT add information "
     "that is not present in the original. "
-    "Keep game-specific abbreviations (HP, MP, EXP, ATK, DEF, etc.), "
-    "numbers, and proper nouns unchanged unless you know the standard "
-    "localized form in {target_lang}. "
-    "If the input is a short UI label or menu item, translate it concisely "
-    "as a UI element. "
     "Return ONLY the translation. No explanations, notes, or extra text."
 )
 
-# デフォルトのシステムプロンプト（カスタムプロンプト未設定時のフルプロンプト）
-DEFAULT_SYSTEM_PROMPT = BASE_SYSTEM_PROMPT
-
 
 class LlmTranslateProvider(TranslationProvider):
-    """OpenAI API互換のLLM翻訳プロバイダー。"""
+    """OpenAI API互換のLLM翻訳プロバイダー（テキスト翻訳専用）。"""
 
     # LLMは多くの言語に対応しているため、幅広いリストを持つ
     SUPPORTED_LANGUAGES = [
@@ -68,20 +63,25 @@ class LlmTranslateProvider(TranslationProvider):
         model: str = "",
         system_prompt: str = "",
         disable_thinking: bool = True,
+        parallel: bool = True,
     ):
-        self._base_url = base_url.rstrip("/") if base_url else ""
-        self._api_key = api_key
-        self._model = model
-        self._custom_prompt = system_prompt  # ユーザーのカスタム追加指示（空なら使わない）
-        self._disable_thinking = disable_thinking
+        self._client = LlmApiClient(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            disable_thinking=disable_thinking,
+        )
+        self._custom_prompt = system_prompt  # ユーザーのグローバル追加指示
+        self._game_prompt = ""  # ゲーム別プロンプト
+        self._parallel = parallel
         logger.debug(
-            f"LlmTranslateProvider initialized: base_url={self._base_url}, "
-            f"model={self._model}, disable_thinking={self._disable_thinking}"
+            f"LlmTranslateProvider initialized: base_url={base_url}, "
+            f"model={model}, disable_thinking={disable_thinking}"
         )
 
     @property
     def name(self) -> str:
-        return f"LLM ({self._model or 'unconfigured'})"
+        return f"LLM ({self._client.model or 'unconfigured'})"
 
     @property
     def provider_type(self) -> ProviderType:
@@ -93,120 +93,54 @@ class LlmTranslateProvider(TranslationProvider):
         api_key: str = None,
         model: str = None,
         system_prompt: str = None,
+        game_prompt: str = None,
         disable_thinking: bool = None,
+        parallel: bool = None,
     ) -> None:
-        """設定を更新する。Noneでない値のみ更新（空文字列での明示的クリアに対応）。"""
-        if base_url is not None:
-            self._base_url = base_url.rstrip("/") if base_url else ""
-        if api_key is not None:
-            self._api_key = api_key
-        if model is not None:
-            self._model = model
+        """設定を更新する。Noneでない値のみ更新。"""
+        self._client.configure(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            disable_thinking=disable_thinking,
+        )
         if system_prompt is not None:
             self._custom_prompt = system_prompt
-        if disable_thinking is not None:
-            self._disable_thinking = disable_thinking
+        if game_prompt is not None:
+            self._game_prompt = game_prompt
+        if parallel is not None:
+            self._parallel = parallel
 
     def _get_language_name(self, lang_code: str) -> str:
         """言語コードを自然言語名に変換する。"""
         return self.LANGUAGE_NAMES.get(lang_code, lang_code)
 
     def _build_system_prompt(self, source_lang: str, target_lang: str) -> str:
-        """翻訳用のシステムプロンプトを構築する。
+        """Text翻訳用のシステムプロンプトを構築する。
 
-        ベースプロンプト（言語指定含む）は常に使用し、
-        ユーザーのカスタムプロンプトがあれば追加指示として末尾に付加する。
-        source_langが"auto"の場合は言語自動検出を明示的に指示する。
+        注入順: Text固定プロンプト → 共通Text プロンプト → ゲーム別Text プロンプト
         """
         tgt_name = self._get_language_name(target_lang)
         if source_lang == "auto":
             src_name = "the detected language"
         else:
             src_name = self._get_language_name(source_lang)
-        base = BASE_SYSTEM_PROMPT.format(
+        base = TEXT_FIXED_PROMPT.format(
             source_lang=src_name, target_lang=tgt_name
         )
+        # 共通Text プロンプト → ゲーム別Text プロンプト
+        additional = []
         if self._custom_prompt:
-            return f"{base}\n\nAdditional instructions: {self._custom_prompt}"
+            additional.append(self._custom_prompt)
+        if self._game_prompt:
+            additional.append(self._game_prompt)
+        if additional:
+            return f"{base}\n\nAdditional instructions:\n{chr(10).join(additional)}"
         return base
-
-    def _call_api(self, messages: list, temperature: float = 0.1) -> str:
-        """OpenAI API互換エンドポイントを呼び出す。"""
-        if not self._base_url or not self._model:
-            raise ApiKeyError("LLM base_url and model must be configured")
-
-        url = f"{self._base_url}/chat/completions"
-        headers = {
-            "Content-Type": "application/json",
-        }
-        if self._api_key:
-            headers["Authorization"] = f"Bearer {self._api_key}"
-
-        payload = {
-            "model": self._model,
-            "messages": messages,
-            "temperature": temperature,
-        }
-
-        # thinkingモード無効化: 各プラットフォーム向けのパラメータを送信
-        # 非対応サーバーは未知のパラメータを無視するため、全て同時に送信して安全
-        if self._disable_thinking:
-            # Ollama: chat APIのトップレベルパラメータ
-            payload["think"] = False
-            # DashScope (Alibaba Cloud / Qwen3.5-Plus等): enable_thinking
-            payload["enable_thinking"] = False
-            # vLLM: chat_template_kwargs経由
-            payload["chat_template_kwargs"] = {"enable_thinking": False}
-
-        try:
-            response = requests.post(
-                url, headers=headers, json=payload, timeout=30.0
-            )
-
-            if response.status_code == 401:
-                raise ApiKeyError("Invalid API key")
-            if response.status_code == 429:
-                from .base import RateLimitError
-                raise RateLimitError("Rate limit exceeded")
-            if response.status_code != 200:
-                logger.warning(
-                    f"LLM API error: {response.status_code} - {response.text[:200]}"
-                )
-                raise NetworkError(f"LLM API returned status {response.status_code}")
-
-            result = response.json()
-            content = result["choices"][0]["message"]["content"]
-            # thinkingモード対応: <think>...</think> タグを除去
-            # DeepSeek-R1, Qwen3等がインラインで思考内容を含む場合がある
-            content = self._strip_thinking_tags(content)
-            return content.strip()
-
-        except requests.exceptions.ConnectionError as e:
-            logger.error(f"LLM connection error: {e}")
-            raise NetworkError("LLMサーバーに接続できません") from e
-        except requests.exceptions.Timeout as e:
-            logger.error(f"LLM timeout: {e}")
-            raise NetworkError("LLMサーバーがタイムアウトしました") from e
-        except (KeyError, IndexError, json.JSONDecodeError) as e:
-            logger.error(f"LLM response parse error: {e}")
-            raise NetworkError("LLMのレスポンスを解析できません") from e
-
-    @staticmethod
-    def _strip_thinking_tags(text: str) -> str:
-        """thinkingモードのタグを除去する。
-
-        DeepSeek-R1, Qwen3等はレスポンスに <think>...</think> を含む場合がある。
-        また <reasoning>...</reasoning> 等の亜種にも対応する。
-        """
-        # <think>...</think> (改行を含む)
-        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-        # <reasoning>...</reasoning>
-        text = re.sub(r"<reasoning>.*?</reasoning>", "", text, flags=re.DOTALL)
-        return text.strip()
 
     def is_available(self, source_lang: str = "auto", target_lang: str = "en") -> bool:
         """base_urlとmodelが設定されていればTrueを返す。"""
-        return bool(self._base_url) and bool(self._model)
+        return self._client.is_configured()
 
     def get_supported_languages(self) -> List[str]:
         return self.SUPPORTED_LANGUAGES.copy()
@@ -222,7 +156,7 @@ class LlmTranslateProvider(TranslationProvider):
         ]
 
         logger.debug(f"LLM translate: {source_lang} -> {target_lang}, len={len(text)}")
-        result = await asyncio.to_thread(self._call_api, messages)
+        result = await asyncio.to_thread(self._client.call, messages)
         return result
 
     async def translate_batch(
@@ -231,15 +165,12 @@ class LlmTranslateProvider(TranslationProvider):
         if not texts:
             return texts
 
-        # テキストが1つだけの場合は単一翻訳を使う
         if len(texts) == 1:
             translated = await self.translate(texts[0], source_lang, target_lang)
             return [translated]
 
         system_prompt = self._build_system_prompt(source_lang, target_lang)
 
-        # バッチ翻訳用のプロンプトを構築
-        # 番号付きで送信し、番号付きで受信する（行数の不一致を防ぐ）
         numbered_lines = []
         for i, text in enumerate(texts, 1):
             numbered_lines.append(f"[{i}] {text}")
@@ -263,16 +194,14 @@ class LlmTranslateProvider(TranslationProvider):
         )
 
         try:
-            result = await asyncio.to_thread(self._call_api, messages)
+            result = await asyncio.to_thread(self._client.call, messages)
             translated = self._parse_batch_response(result, len(texts))
 
-            # 欠落している翻訳を特定
             missing_indices = [i for i, t in enumerate(translated) if t is None]
 
             if not missing_indices:
                 return translated
 
-            # 欠落分だけ個別翻訳で補完
             logger.warning(
                 f"LLM batch: {len(missing_indices)}/{len(texts)} translations missing "
                 f"(indices: {missing_indices}), fetching individually"
@@ -284,13 +213,12 @@ class LlmTranslateProvider(TranslationProvider):
                     )
                 except Exception as e:
                     logger.warning(f"Individual translation failed for [{i+1}]: {e}")
-                    translated[i] = texts[i]  # 原文をそのまま返す
+                    translated[i] = texts[i]
 
             return translated
 
         except Exception as e:
             logger.error(f"LLM batch translation error: {e}")
-            # エラー時は個別翻訳にフォールバック
             return await self._translate_individually(texts, source_lang, target_lang)
 
     # バッチレスポンスの [N] 番号を厳密にマッチする正規表現
@@ -319,18 +247,19 @@ class LlmTranslateProvider(TranslationProvider):
                 if 1 <= num <= expected_count:
                     current_num = num
                     result_map[num] = text
-                # 範囲外の番号は無視
             elif current_num is not None:
-                # 番号なし行: 直前の翻訳の続き（LLMが改行で分割した場合）
                 result_map[current_num] += " " + line
 
-        # 連番で結果を組み立て（欠落はNone）
         return [result_map.get(i) for i in range(1, expected_count + 1)]
 
     async def _translate_individually(
         self, texts: List[str], source_lang: str, target_lang: str
     ) -> List[str]:
-        """個別に翻訳する（フォールバック用）。"""
+        """個別に翻訳する（フォールバック用）。並列設定に応じて逐次/並列を切り替え。"""
+        if self._parallel:
+            return await self._translate_individually_parallel(
+                texts, source_lang, target_lang
+            )
         results = []
         for text in texts:
             try:
@@ -340,3 +269,16 @@ class LlmTranslateProvider(TranslationProvider):
                 logger.warning(f"Individual translation failed: {e}")
                 results.append(text)
         return results
+
+    async def _translate_individually_parallel(
+        self, texts: List[str], source_lang: str, target_lang: str
+    ) -> List[str]:
+        """個別翻訳を並列実行する。"""
+        async def _one(text: str) -> str:
+            try:
+                return await self.translate(text, source_lang, target_lang)
+            except Exception as e:
+                logger.warning(f"Individual translation failed: {e}")
+                return text
+
+        return list(await asyncio.gather(*[_one(t) for t in texts]))
