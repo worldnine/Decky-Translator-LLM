@@ -360,9 +360,9 @@ export class GameTranslatorLogic {
         try {
             this.isProcessing = true;
 
-            // ゲーム別プロンプトを適用（LLMプロバイダー使用時のみ）
+            // ゲーム別プロンプトを適用（LLMプロバイダーまたはVisionモード使用時）
             const mainApp = Router.MainRunningApp;
-            if (mainApp?.appid && this.translationProvider === 'llm') {
+            if (mainApp?.appid && (this.translationProvider === 'llm' || this.visionMode !== 'off')) {
                 try {
                     await call('ensure_game_prompt_file', Number(mainApp.appid), mainApp.display_name || "");
                 } catch (e) {
@@ -390,8 +390,7 @@ export class GameTranslatorLogic {
                     this.imageState.showImage(result.base64);
 
                     // Vision Translation: OCRバイパスでVision Providerに直接画像送信
-                    // 現在VisionはLLM設定をフォールバックするため、LLMプロバイダー選択時のみ実行
-                    if (this.visionMode === 'direct' && this.translationProvider === 'llm') {
+                    if (this.visionMode === 'direct') {
                         this.imageState.updateProcessingStep("Translating (Vision)");
                         const visionResult = await this.textTranslator.visionTranslate(result.base64);
                         if (visionResult && visionResult.length > 0) {

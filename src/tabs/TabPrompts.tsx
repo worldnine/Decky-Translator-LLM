@@ -81,30 +81,35 @@ export const TabPrompts: VFC = () => {
     const [gameVisionPath, setGameVisionPath] = useState("");
     const [gameVisionSaved, setGameVisionSaved] = useState("");
 
+    const isTextLlm = settings.translationProvider === 'llm';
+    const isVisionActive = settings.visionMode !== 'off';
+
     // 共通プロンプト読み込み
     useEffect(() => {
-        if (settings.translationProvider !== 'llm') return;
+        if (isTextLlm) {
+            call<any>('get_common_text_prompt').then(result => {
+                if (result) {
+                    setCommonTextContent(result.content || "");
+                    setCommonTextPath(result.file_path || "");
+                    setCommonTextSaved(result.content || "");
+                }
+            });
+        }
 
-        call<any>('get_common_text_prompt').then(result => {
-            if (result) {
-                setCommonTextContent(result.content || "");
-                setCommonTextPath(result.file_path || "");
-                setCommonTextSaved(result.content || "");
-            }
-        });
-
-        call<any>('get_common_vision_prompt').then(result => {
-            if (result) {
-                setCommonVisionContent(result.content || "");
-                setCommonVisionPath(result.file_path || "");
-                setCommonVisionSaved(result.content || "");
-            }
-        });
-    }, [settings.translationProvider]);
+        if (isVisionActive) {
+            call<any>('get_common_vision_prompt').then(result => {
+                if (result) {
+                    setCommonVisionContent(result.content || "");
+                    setCommonVisionPath(result.file_path || "");
+                    setCommonVisionSaved(result.content || "");
+                }
+            });
+        }
+    }, [settings.translationProvider, settings.visionMode]);
 
     // ゲーム別プロンプト読み込み
     useEffect(() => {
-        if (settings.translationProvider !== 'llm') return;
+        if (!isTextLlm && !isVisionActive) return;
 
         const mainApp = Router.MainRunningApp;
         if (!mainApp?.appid) {
@@ -117,22 +122,26 @@ export const TabPrompts: VFC = () => {
 
         setGameInfo({ appId, displayName });
 
-        call<any>('ensure_game_text_prompt_file', appId, displayName).then(result => {
-            if (result && !result.error) {
-                setGameTextContent(result.content || "");
-                setGameTextPath(result.file_path || "");
-                setGameTextSaved(result.content || "");
-            }
-        });
+        if (isTextLlm) {
+            call<any>('ensure_game_text_prompt_file', appId, displayName).then(result => {
+                if (result && !result.error) {
+                    setGameTextContent(result.content || "");
+                    setGameTextPath(result.file_path || "");
+                    setGameTextSaved(result.content || "");
+                }
+            });
+        }
 
-        call<any>('ensure_game_vision_prompt_file', appId, displayName).then(result => {
-            if (result && !result.error) {
-                setGameVisionContent(result.content || "");
-                setGameVisionPath(result.file_path || "");
-                setGameVisionSaved(result.content || "");
-            }
-        });
-    }, [settings.translationProvider]);
+        if (isVisionActive) {
+            call<any>('ensure_game_vision_prompt_file', appId, displayName).then(result => {
+                if (result && !result.error) {
+                    setGameVisionContent(result.content || "");
+                    setGameVisionPath(result.file_path || "");
+                    setGameVisionSaved(result.content || "");
+                }
+            });
+        }
+    }, [settings.translationProvider, settings.visionMode]);
 
     // 保存ハンドラ
     const saveCommonText = () => {
@@ -160,16 +169,16 @@ export const TabPrompts: VFC = () => {
         }
     };
 
-    // LLMプロバイダー未選択時
-    if (settings.translationProvider !== 'llm') {
+    // Text LLMもVisionも未使用の場合
+    if (!isTextLlm && !isVisionActive) {
         return (
             <div style={{ marginLeft: "-8px", marginRight: "-8px", paddingBottom: "40px" }}>
                 <PanelSection title="Prompts">
                     <PanelSectionRow>
                         <Field focusable={true} childrenContainerWidth="max">
                             <div style={{ color: "#8b929a", fontSize: "12px", lineHeight: "1.6" }}>
-                                <div>Prompt settings are only available with the LLM translation provider.</div>
-                                <div style={{ marginTop: "4px" }}>Select "LLM (OpenAI-compatible)" in the Translation tab.</div>
+                                <div>Prompt settings require LLM translation or Vision mode.</div>
+                                <div style={{ marginTop: "4px" }}>Select "LLM" in Translation tab, or enable Vision Mode.</div>
                             </div>
                         </Field>
                     </PanelSectionRow>
@@ -180,27 +189,29 @@ export const TabPrompts: VFC = () => {
 
     return (
         <div style={{ marginLeft: "-8px", marginRight: "-8px", paddingBottom: "40px" }}>
-            {/* 共通Text指示 */}
-            <PanelSection title="Common Text Instructions">
-                <PanelSectionRow>
-                    <Field focusable={true} childrenContainerWidth="max">
-                        <div style={{ color: "#8b929a", fontSize: "12px", lineHeight: "1.6" }}>
-                            All games, text translation. e.g. abbreviation rules, tone, terminology.
-                        </div>
-                    </Field>
-                </PanelSectionRow>
-                <PromptEditor
-                    label="Text Instructions"
-                    value={commonTextContent}
-                    filePath={commonTextPath}
-                    placeholder="Keep HP, MP, EXP unchanged. Translate UI labels concisely..."
-                    onChange={setCommonTextContent}
-                    onBlur={saveCommonText}
-                />
-            </PanelSection>
+            {/* 共通Text指示（Text LLM使用時のみ） */}
+            {isTextLlm && (
+                <PanelSection title="Common Text Instructions">
+                    <PanelSectionRow>
+                        <Field focusable={true} childrenContainerWidth="max">
+                            <div style={{ color: "#8b929a", fontSize: "12px", lineHeight: "1.6" }}>
+                                All games, text translation. e.g. abbreviation rules, tone, terminology.
+                            </div>
+                        </Field>
+                    </PanelSectionRow>
+                    <PromptEditor
+                        label="Text Instructions"
+                        value={commonTextContent}
+                        filePath={commonTextPath}
+                        placeholder="Keep HP, MP, EXP unchanged. Translate UI labels concisely..."
+                        onChange={setCommonTextContent}
+                        onBlur={saveCommonText}
+                    />
+                </PanelSection>
+            )}
 
-            {/* 共通Vision指示 */}
-            {settings.visionMode !== 'off' && (
+            {/* 共通Vision指示（Vision有効時のみ） */}
+            {isVisionActive && (
                 <PanelSection title="Common Vision Instructions">
                     <PanelSectionRow>
                         <Field focusable={true} childrenContainerWidth="max">
@@ -231,15 +242,17 @@ export const TabPrompts: VFC = () => {
                                 </div>
                             </Field>
                         </PanelSectionRow>
-                        <PromptEditor
-                            label="Game Text Instructions"
-                            value={gameTextContent}
-                            filePath={gameTextPath}
-                            placeholder="Glossary and tone for this game's text translation..."
-                            onChange={setGameTextContent}
-                            onBlur={saveGameText}
-                        />
-                        {settings.visionMode !== 'off' && (
+                        {isTextLlm && (
+                            <PromptEditor
+                                label="Game Text Instructions"
+                                value={gameTextContent}
+                                filePath={gameTextPath}
+                                placeholder="Glossary and tone for this game's text translation..."
+                                onChange={setGameTextContent}
+                                onBlur={saveGameText}
+                            />
+                        )}
+                        {isVisionActive && (
                             <PromptEditor
                                 label="Game Vision Instructions"
                                 value={gameVisionContent}
