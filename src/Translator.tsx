@@ -2,7 +2,7 @@
 
 import { call, toaster } from "@decky/api";
 import { Router } from "@decky/ui";
-import { TextRecognizer, NetworkError, ApiKeyError, RateLimitError } from "./TextRecognizer";
+import { NetworkError, ApiKeyError, RateLimitError } from "./TextRecognizer";
 import { TextTranslator } from "./TextTranslator";
 import { Input, InputMode, ActionType, ProgressInfo } from "./Input";
 import { ImageState } from "./Overlay";
@@ -18,7 +18,6 @@ export interface ScreenshotResponse {
 export class GameTranslatorLogic {
     private isProcessing = false;
     public imageState: ImageState;
-    private textRecognizer: TextRecognizer;
     private textTranslator: TextTranslator;
     private shortcutInput: Input; // Added shortcut input handler
     private progressListeners: Array<(progressInfo: ProgressInfo) => void> = [];
@@ -26,12 +25,9 @@ export class GameTranslatorLogic {
     private confidenceThreshold: number = 0.6; // Default confidence threshold
     private pauseGameOnOverlay: boolean = false;
     private hideIdenticalTranslations: boolean = false;
-    private visionMode: string = "off";
-
-    // Provider settings for upfront validation
-    private ocrProvider: string = "rapidocr";
-    private translationProvider: string = "freegoogle";
-    private hasGoogleApiKey: boolean = false;
+    private geminiBaseUrl: string = "";
+    private geminiApiKey: string = "";
+    private geminiModel: string = "";
 
     isOverlayVisible(): boolean {
         return this.imageState.isVisible();
@@ -44,7 +40,6 @@ export class GameTranslatorLogic {
 
     constructor(imageState: ImageState) {
         this.imageState = imageState;
-        this.textRecognizer = new TextRecognizer();
         this.textTranslator = new TextTranslator();
 
         // Initialize for hidraw-based button detection
@@ -107,7 +102,7 @@ export class GameTranslatorLogic {
     // Load initial state from server
     private async loadInitialState() {
         try {
-            const result = await call<boolean>('get_enabled_state');
+            const result = await call<[], boolean>('get_enabled_state');
             this.enabled = !!result;
             logger.info('Translator', `Loaded initial enabled state: ${this.enabled}`);
 
@@ -179,9 +174,6 @@ export class GameTranslatorLogic {
     setConfidenceThreshold(threshold: number): void {
         logger.debug('Translator', `Setting confidence threshold to: ${threshold}`);
         this.confidenceThreshold = threshold;
-
-        // Update the textRecognizer with the new threshold
-        this.textRecognizer.setConfidenceThreshold(threshold);
     }
 
     getConfidenceThreshold(): number {
@@ -189,15 +181,11 @@ export class GameTranslatorLogic {
     }
 
     setGroupingPower = (power: number): void => {
-        this.textRecognizer.setGroupingPower(power);
+        logger.debug('Translator', `Grouping power set to ${power} (unused in Gemini direct mode)`);
     }
 
     setHideIdenticalTranslations = (enabled: boolean): void => {
         this.hideIdenticalTranslations = enabled;
-    }
-
-    setVisionMode = (mode: string): void => {
-        this.visionMode = mode;
     }
 
     setPauseGameOnOverlay = (enabled: boolean): void => {
@@ -226,13 +214,13 @@ export class GameTranslatorLogic {
             }
 
             // Use the pid_from_appid function to get the process ID
-            const pid = await call<number>('pid_from_appid', Number(mainApp.appid));
+            const pid = await call<[number], number>('pid_from_appid', Number(mainApp.appid));
 
             if (pid) {
                 logger.info('Translator', `Pausing game with appid ${mainApp.appid}, pid ${pid}`);
 
                 // Call the pause function in the backend
-                const pauseResult = await call<boolean>('pause', pid);
+                const pauseResult = await call<[number], boolean>('pause', pid);
                 if (pauseResult) {
                     logger.info('Translator', 'Game paused successfully');
                 } else {
@@ -257,13 +245,13 @@ export class GameTranslatorLogic {
             }
 
             // Use the pid_from_appid function to get the process ID
-            const pid = await call<number>('pid_from_appid', Number(mainApp.appid));
+            const pid = await call<[number], number>('pid_from_appid', Number(mainApp.appid));
 
             if (pid) {
                 logger.info('Translator', `Resuming game with appid ${mainApp.appid}, pid ${pid}`);
 
                 // Call the resume function in the backend
-                const resumeResult = await call<boolean>('resume', pid);
+                const resumeResult = await call<[number], boolean>('resume', pid);
                 if (resumeResult) {
                     logger.info('Translator', 'Game resumed successfully');
                 } else {
@@ -349,35 +337,29 @@ export class GameTranslatorLogic {
             return;
         }
 
-        // Check if API key is required but missing BEFORE starting the process
-        // Vision Direct モードでは OCR/Translation プロバイダーをバイパスするため、
-        // Google API キーチェックをスキップする
-        if (this.visionMode !== 'direct') {
-            const apiKeyCheck = this.requiresApiKeyButMissing();
-            if (apiKeyCheck.missing) {
-                logger.warn('Translator', `Cannot start translation: ${apiKeyCheck.message}`);
-                this.notify(apiKeyCheck.message, 3000, "Please configure your Google Cloud API key in settings or switch to a free provider.");
-                return;
-            }
+        const geminiConfigCheck = this.validateGeminiConfiguration();
+        if (!geminiConfigCheck.ok) {
+            logger.warn('Translator', `Cannot start translation: ${geminiConfigCheck.message}`);
+            this.notify(geminiConfigCheck.message, 3000, geminiConfigCheck.detail);
+            return;
         }
 
         try {
             this.isProcessing = true;
 
-            // ゲーム別プロンプトを適用（LLMプロバイダーまたはVisionモード使用時）
             const mainApp = Router.MainRunningApp;
-            if (mainApp?.appid && (this.translationProvider === 'llm' || this.visionMode !== 'off')) {
+            if (mainApp?.appid) {
                 try {
-                    await call('ensure_game_prompt_file', Number(mainApp.appid), mainApp.display_name || "");
+                    await call('ensure_game_vision_prompt_file', Number(mainApp.appid), mainApp.display_name || "");
                 } catch (e) {
-                    logger.warn('Translator', 'Failed to apply game prompt', e);
+                    logger.warn('Translator', 'Failed to apply Gemini prompt', e);
                 }
             }
 
             // Take screenshot FIRST while screen is clean (no overlay visible)
             const appName = mainApp?.display_name || "";
             logger.info('Translator', `Taking new screenshot for: ${appName}`);
-            const result = await call<ScreenshotResponse>('take_screenshot', appName);
+            const result = await call<[string], ScreenshotResponse | null>('take_screenshot', appName);
 
             // NOW show the overlay - after screenshot is captured
             this.imageState.hideImage();
@@ -393,81 +375,42 @@ export class GameTranslatorLogic {
                     // Immediately show the new screenshot on the overlay
                     this.imageState.showImage(result.base64);
 
-                    // Vision Translation: OCRバイパスでVision Providerに直接画像送信
-                    if (this.visionMode === 'direct') {
-                        this.imageState.updateProcessingStep("Translating (Vision)");
-                        const visionResult = await this.textTranslator.visionTranslate(result.base64);
-                        if (visionResult) {
-                            // 一時スクリーンショットを削除（OCRフローを経由しないため）
-                            if (result.path) {
-                                call('delete_screenshot', result.path).catch(() => {});
-                            }
-                            if (visionResult.length > 0) {
-                                logger.info('Translator', `Vision translation complete: ${visionResult.length} regions`);
-                                let translatedRegions = visionResult;
-                                if (this.hideIdenticalTranslations) {
-                                    const before = translatedRegions.length;
-                                    translatedRegions = translatedRegions.filter(r =>
-                                        r.translatedText.trim().toLowerCase() !== r.text.trim().toLowerCase()
-                                    );
-                                    if (translatedRegions.length < before) {
-                                        logger.info('Translator', `Filtered ${before - translatedRegions.length} identical translations`);
-                                    }
+                    this.imageState.updateProcessingStep("Translating with Gemini");
+                    const visionResult = await this.textTranslator.visionTranslate(result.base64);
+
+                    if (result.path) {
+                        call('delete_screenshot', result.path).catch(() => {});
+                    }
+
+                    if (visionResult !== null) {
+                        if (visionResult.length > 0) {
+                            logger.info('Translator', `Gemini translation complete: ${visionResult.length} regions`);
+                            let translatedRegions = visionResult;
+
+                            if (this.hideIdenticalTranslations) {
+                                const before = translatedRegions.length;
+                                translatedRegions = translatedRegions.filter(r =>
+                                    r.translatedText.trim().toLowerCase() !== r.text.trim().toLowerCase()
+                                );
+                                if (translatedRegions.length < before) {
+                                    logger.info('Translator', `Filtered ${before - translatedRegions.length} identical translations`);
                                 }
-                                this.imageState.showTranslatedImage(result.base64, translatedRegions);
-                            } else {
-                                // 空配列 = テキストなし（正常結果）
-                                logger.info('Translator', 'Vision translation: no text found');
-                                this.imageState.updateProcessingStep("No text found");
-                                setTimeout(() => { this.imageState.hideImage(); }, 2000);
                             }
-                            return;
+
+                            this.imageState.showTranslatedImage(result.base64, translatedRegions);
+                        } else {
+                            logger.info('Translator', 'Gemini translation: no text found');
+                            this.imageState.updateProcessingStep("No text found");
+                            setTimeout(() => {
+                                this.imageState.hideImage();
+                            }, 2000);
                         }
-                        // visionResult === null → Vision失敗、OCRフローにフォールバック
-                        logger.warn('Translator', 'Vision translation failed, falling back to OCR');
-                    }
-
-                    // OCRフロー
-                    this.imageState.updateProcessingStep("Recognizing text");
-
-                    // Check if we have a valid path
-                    if (!result.path) {
-                        logger.warn('Translator', 'Screenshot path is empty, aborting OCR process');
-                        this.imageState.hideImage();
-                        return;
-                    }
-
-                    // Process with OCR
-                    const textRegions = await this.textRecognizer.recognizeTextFile(result.path);
-                    logger.info('Translator', `Found ${textRegions.length} text regions`);
-
-                    if (textRegions.length > 0) {
-                        // Update processing step to translation
-                        this.imageState.updateProcessingStep("Translating text");
-
-                        // Translate text（画像再認識用にbase64画像データも渡す）
-                        let translatedRegions = await this.textTranslator.translateText(textRegions, result.base64);
-                        logger.info('Translator', `Translation complete: ${translatedRegions.length} regions`);
-
-                        if (this.hideIdenticalTranslations) {
-                            const before = translatedRegions.length;
-                            translatedRegions = translatedRegions.filter(r =>
-                                r.translatedText.trim().toLowerCase() !== r.text.trim().toLowerCase()
-                            );
-                            if (translatedRegions.length < before) {
-                                logger.info('Translator', `Filtered ${before - translatedRegions.length} identical translations`);
-                            }
-                        }
-
-                        this.imageState.showTranslatedImage(result.base64, translatedRegions);
                     } else {
-                        // No text found, show message
-                        this.imageState.updateProcessingStep("No text found");
-
-                        // Hide overlay after a short delay
+                        logger.warn('Translator', 'Gemini translation returned null');
+                        this.imageState.updateProcessingStep("Translation failed");
                         setTimeout(() => {
                             this.imageState.hideImage();
-                        }, 2000); // 2 seconds delay
+                        }, 2500);
                     }
                 } else {
                     logger.warn('Translator', 'No base64 data in screenshot response');
@@ -578,36 +521,50 @@ export class GameTranslatorLogic {
         this.imageState.setAllowLabelGrowth(allow);
     }
 
-    // Methods for provider settings (used for upfront API key validation)
-    setOcrProvider = (provider: string): void => {
-        this.ocrProvider = provider;
-        logger.debug('Translator', `OCR provider set to: ${provider}`);
+    setGeminiBaseUrl = (baseUrl: string): void => {
+        this.geminiBaseUrl = baseUrl.trim();
     }
 
-    setTranslationProvider = (provider: string): void => {
-        this.translationProvider = provider;
-        logger.debug('Translator', `Translation provider set to: ${provider}`);
+    setGeminiApiKey = (apiKey: string): void => {
+        this.geminiApiKey = apiKey;
     }
 
-    setHasGoogleApiKey = (hasKey: boolean): void => {
-        this.hasGoogleApiKey = hasKey;
-        logger.debug('Translator', `Google API key available: ${hasKey}`);
+    setGeminiModel = (model: string): void => {
+        this.geminiModel = model.trim();
     }
 
-    // Check if the current provider configuration requires an API key that's missing
-    private requiresApiKeyButMissing(): { missing: boolean; message: string } {
-        const ocrNeedsKey = this.ocrProvider === 'googlecloud';
-        const translationNeedsKey = this.translationProvider === 'googlecloud';
+    private validateGeminiConfiguration(): { ok: boolean; message: string; detail: string } {
+        if (!this.geminiModel) {
+            return {
+                ok: false,
+                message: "Gemini model is not set",
+                detail: "Set the model name in Translation settings before translating.",
+            };
+        }
 
-        if ((ocrNeedsKey || translationNeedsKey) && !this.hasGoogleApiKey) {
-            if (ocrNeedsKey && translationNeedsKey) {
-                return { missing: true, message: "API key required for OCR & Translation" };
-            } else if (ocrNeedsKey) {
-                return { missing: true, message: "API key required for OCR" };
-            } else {
-                return { missing: true, message: "API key required for Translation" };
+        if (!this.geminiApiKey) {
+            return {
+                ok: false,
+                message: "Gemini API key is not set",
+                detail: "Add your Gemini API key in Translation settings before translating.",
+            };
+        }
+
+        if (this.geminiBaseUrl) {
+            try {
+                const url = new URL(this.geminiBaseUrl);
+                if (!["http:", "https:"].includes(url.protocol)) {
+                    throw new Error("invalid protocol");
+                }
+            } catch {
+                return {
+                    ok: false,
+                    message: "Gemini Base URL is invalid",
+                    detail: "Use a valid http(s) URL or leave it empty to use the official Gemini endpoint.",
+                };
             }
         }
-        return { missing: false, message: "" };
+
+        return { ok: true, message: "", detail: "" };
     }
 }

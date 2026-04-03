@@ -2,8 +2,7 @@
 
 import {
     definePlugin,
-    routerHook,
-    call
+    routerHook
 } from "@decky/api";
 
 import {
@@ -60,7 +59,6 @@ const GameTranslator: VFC<{ logic: GameTranslatorLogic }> = ({ logic }) => {
     const { settings, initialized } = useSettings();
     const [overlayVisible, setOverlayVisible] = useState<boolean>(logic.isOverlayVisible());
     const [inputDiagnostics, setInputDiagnostics] = useState<any>(null);
-    const [providerStatus, setProviderStatus] = useState<any>(null);
     const [currentTabRoute, setCurrentTabRoute] = useState<string>("main");
 
     useEffect(() => {
@@ -81,33 +79,6 @@ const GameTranslator: VFC<{ logic: GameTranslatorLogic }> = ({ logic }) => {
             clearInterval(intervalId);
         };
     }, [logic, settings.enabled]);
-
-    // Fetch provider status (including usage stats) when using free providers
-    useEffect(() => {
-        if (!settings.useFreeProviders) {
-            setProviderStatus(null);
-            return;
-        }
-
-        const fetchProviderStatus = async () => {
-            try {
-                const result = await call<any>('get_provider_status');
-                if (result) {
-                    setProviderStatus(result);
-                }
-            } catch (error) {
-                logger.error('GameTranslator', 'Failed to fetch provider status', error);
-            }
-        };
-
-        fetchProviderStatus();
-        // Refresh every 5 seconds for responsive updates
-        const intervalId = setInterval(fetchProviderStatus, 5000);
-
-        return () => {
-            clearInterval(intervalId);
-        };
-    }, [settings.useFreeProviders]);
 
     // Refresh diagnostics while debug mode is on
     useEffect(() => {
@@ -165,7 +136,7 @@ const GameTranslator: VFC<{ logic: GameTranslatorLogic }> = ({ logic }) => {
                         {
                             // @ts-ignore
                             title: <IconTranslate />,
-                            content: <TabMain logic={logic} overlayVisible={overlayVisible} providerStatus={providerStatus} />,
+                            content: <TabMain logic={logic} overlayVisible={overlayVisible} />,
                             id: "main",
                         },
                         {
@@ -305,6 +276,7 @@ export default definePlugin(() => {
     ));
 
     return {
+        name: "Decky Translator",
         title: <div className={staticClasses.Title}>Decky Translator</div>,
         content: <TranslatorApp logic={logic}/>,
         icon: <BsTranslate/>,

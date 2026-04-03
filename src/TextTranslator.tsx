@@ -41,7 +41,7 @@ export class TextTranslator {
 
     async visionTranslate(imageData: string): Promise<TranslatedRegion[] | null> {
         try {
-            const response = await call<TranslatedRegion[] | ErrorResponse | null>(
+            const response = await call<[string, string, string], TranslatedRegion[] | ErrorResponse | null>(
                 'vision_translate',
                 imageData,
                 this.targetLanguage,
@@ -82,7 +82,7 @@ export class TextTranslator {
 
             // Call the Python backend method for translation, now including input language
             // 画像再認識用にimage_dataも渡す（バックエンドで必要かどうかを判断）
-            const response = await call<TranslatedRegion[] | ErrorResponse>(
+            const response = await call<[TextRegion[], string, string, string | null], TranslatedRegion[] | ErrorResponse | null>(
                 'translate_text',
                 textRegions,
                 this.targetLanguage,
