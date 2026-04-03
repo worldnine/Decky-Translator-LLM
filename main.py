@@ -867,10 +867,6 @@ class Plugin:
     _input_mode: int = 0  # 0 = both touchpads, 1 = left touchpad, 2 = right touchpad
     _hold_time_translate: int = 1000  # Default to 1 second
     _hold_time_dismiss: int = 500  # Default to 0.5 seconds for dismissal
-    _confidence_threshold: float = 0.6  # Default confidence threshold
-    _rapidocr_confidence: float = 0.5  # RapidOCR-specific confidence threshold (0.0-1.0)
-    _rapidocr_box_thresh: float = 0.5  # RapidOCR detection box threshold (0.0-1.0)
-    _rapidocr_unclip_ratio: float = 1.6  # RapidOCR box expansion ratio (1.0-3.0)
     _pause_game_on_overlay: bool = False  # Default to not pausing game on overlay
     _quick_toggle_enabled: bool = False  # Default to disabled for quick toggle
 
@@ -880,13 +876,6 @@ class Plugin:
 
     # Provider system
     _provider_manager: ProviderManager = None
-    _use_free_providers: bool = True  # Default to free providers (no API key needed)
-    _ocr_provider: str = "rapidocr"  # "rapidocr" (RapidOCR), "ocrspace" (OCR.space), or "googlecloud" (Google Cloud)
-    _translation_provider: str = "freegoogle"  # "freegoogle", "googlecloud", or "llm"
-
-    # OCR API configurations - user must provide their own API key
-    _google_vision_api_key: str = ""
-    _google_translate_api_key: str = ""
 
     # Gemini設定
     _gemini_base_url: str = ""
@@ -895,13 +884,6 @@ class Plugin:
     _gemini_disable_thinking: bool = True
     _gemini_parallel: bool = True
 
-    # 既存 Vision 実装へ流し込む内部状態
-    _vision_llm_base_url: str = ""
-    _vision_llm_api_key: str = ""
-    _vision_llm_model: str = ""
-    _vision_llm_disable_thinking: bool = True
-    _vision_llm_parallel: bool = True
-    _vision_mode: str = "direct"
     _vision_coordinate_mode: str = "pixel"
 
     # ゲーム別プロンプト（現在適用中）
@@ -928,49 +910,14 @@ class Plugin:
             elif key == "enabled":
                 # No need to set an instance variable for this
                 pass
-            elif key == "google_api_key":
-                # Single API key for both Vision and Translate
-                self._google_vision_api_key = value
-                self._google_translate_api_key = value
-                # Update provider manager with new API key
-                if self._provider_manager:
-                    self._provider_manager.configure(
-                        use_free_providers=self._use_free_providers,
-                        google_api_key=value,
-                        ocr_provider=self._ocr_provider,
-                        translation_provider=self._translation_provider
-                    )
-            elif key == "google_vision_api_key":
-                self._google_vision_api_key = value
-                # Update provider manager with new API key
-                if self._provider_manager:
-                    self._provider_manager.configure(
-                        use_free_providers=self._use_free_providers,
-                        google_api_key=value,
-                        ocr_provider=self._ocr_provider,
-                        translation_provider=self._translation_provider
-                    )
-            elif key == "google_translate_api_key":
-                self._google_translate_api_key = value
+            elif key in ("google_api_key", "google_vision_api_key", "google_translate_api_key"):
+                logger.info(f"{key} は Gemini専用構成では未使用です")
             elif key == "hold_time_translate":
                 self._hold_time_translate = value
             elif key == "hold_time_dismiss":
                 self._hold_time_dismiss = value
-            elif key == "confidence_threshold":
-                self._confidence_threshold = value
-            elif key == "rapidocr_confidence":
-                self._rapidocr_confidence = value
-                # Update provider manager with new confidence
-                if self._provider_manager:
-                    self._provider_manager.set_rapidocr_confidence(value)
-            elif key == "rapidocr_box_thresh":
-                self._rapidocr_box_thresh = value
-                if self._provider_manager:
-                    self._provider_manager.set_rapidocr_box_thresh(value)
-            elif key == "rapidocr_unclip_ratio":
-                self._rapidocr_unclip_ratio = value
-                if self._provider_manager:
-                    self._provider_manager.set_rapidocr_unclip_ratio(value)
+            elif key in ("confidence_threshold", "rapidocr_confidence", "rapidocr_box_thresh", "rapidocr_unclip_ratio"):
+                logger.info(f"{key} は Gemini専用構成では未使用です")
             elif key == "pause_game_on_overlay":
                 self._pause_game_on_overlay = value
             elif key == "quick_toggle_enabled":
@@ -989,49 +936,31 @@ class Plugin:
                 logger.setLevel(logging.DEBUG if value else logging.INFO)
             elif key in ("gemini_base_url", "vision_llm_base_url", "text_llm_base_url", "llm_base_url"):
                 self._gemini_base_url = value
-                self._vision_llm_base_url = self._effective_gemini_base_url()
                 setting_key = "gemini_base_url"
                 if self._provider_manager:
                     self._provider_manager.configure_vision(
-                        mode="direct",
                         base_url=self._effective_gemini_base_url(),
                     )
             elif key in ("gemini_api_key", "vision_llm_api_key", "text_llm_api_key", "llm_api_key"):
                 self._gemini_api_key = value
-                self._vision_llm_api_key = value
                 setting_key = "gemini_api_key"
                 if self._provider_manager:
-                    self._provider_manager.configure_vision(
-                        mode="direct",
-                        api_key=value,
-                    )
+                    self._provider_manager.configure_vision(api_key=value)
             elif key in ("gemini_model", "vision_llm_model", "text_llm_model", "llm_model"):
                 self._gemini_model = value
-                self._vision_llm_model = value
                 setting_key = "gemini_model"
                 if self._provider_manager:
-                    self._provider_manager.configure_vision(
-                        mode="direct",
-                        model=value,
-                    )
+                    self._provider_manager.configure_vision(model=value)
             elif key in ("gemini_disable_thinking", "vision_llm_disable_thinking", "text_llm_disable_thinking", "llm_disable_thinking"):
                 self._gemini_disable_thinking = bool(value)
-                self._vision_llm_disable_thinking = bool(value)
                 setting_key = "gemini_disable_thinking"
                 if self._provider_manager:
-                    self._provider_manager.configure_vision(
-                        mode="direct",
-                        disable_thinking=bool(value),
-                    )
+                    self._provider_manager.configure_vision(disable_thinking=bool(value))
             elif key in ("gemini_parallel", "vision_llm_parallel", "text_llm_parallel", "vision_parallel", "llm_parallel"):
                 self._gemini_parallel = bool(value)
-                self._vision_llm_parallel = bool(value)
                 setting_key = "gemini_parallel"
                 if self._provider_manager:
-                    self._provider_manager.configure_vision(
-                        mode="direct",
-                        parallel=bool(value),
-                    )
+                    self._provider_manager.configure_vision(parallel=bool(value))
             elif key == "llm_system_prompt":
                 logger.warning("llm_system_prompt は廃止されました。Prompts タブから Gemini prompt を編集してください。")
             elif key in (
@@ -1085,7 +1014,7 @@ class Plugin:
         """ゲーム別 Gemini prompt をVision実装へ適用する"""
         self._current_game_vision_prompt = game_prompt
         if self._provider_manager:
-            self._provider_manager.configure_vision(mode="direct", game_prompt=game_prompt)
+            self._provider_manager.configure_vision(game_prompt=game_prompt)
 
     def _reload_common_prompts(self):
         """共通 Gemini prompt を再読み込みして適用する。"""
@@ -1102,7 +1031,7 @@ class Plugin:
     def _apply_common_vision_prompt(self, prompt: str):
         """共通 Gemini prompt をVision実装へ適用する"""
         if self._provider_manager:
-            self._provider_manager.configure_vision(mode="direct", system_prompt=prompt)
+            self._provider_manager.configure_vision(system_prompt=prompt)
 
     # --- 共通プロンプト API ---
 
@@ -1276,10 +1205,19 @@ class Plugin:
             return {}
 
     async def get_provider_status(self):
+        """Gemini専用構成のプロバイダー状態を返す。"""
         try:
-            if self._provider_manager:
-                return self._provider_manager.get_provider_status()
-            return {"error": "Provider manager not initialized"}
+            if not self._provider_manager:
+                return {"error": "Provider manager not initialized"}
+            vision = self._provider_manager.get_vision_provider()
+            return {
+                "provider": "gemini_vision",
+                "mode": "direct",
+                "gemini_model": self._gemini_model,
+                "gemini_base_url": self._effective_gemini_base_url(),
+                "gemini_api_key_set": bool(self._gemini_api_key),
+                "vision_available": vision.is_available() if vision else False,
+            }
         except Exception as e:
             logger.error(f"Error getting provider status: {str(e)}")
             return {"error": str(e)}
@@ -1411,12 +1349,10 @@ class Plugin:
 
             results = [
                 self._settings.set_setting("target_language", self._target_language),
-                self._settings.set_setting("google_api_key", self._google_vision_api_key),
                 self._settings.set_setting("input_mode", self._input_mode),
                 self._settings.set_setting("input_language", self._input_language),
                 self._settings.set_setting("hold_time_translate", self._hold_time_translate),
                 self._settings.set_setting("hold_time_dismiss", self._hold_time_dismiss),
-                self._settings.set_setting("confidence_threshold", self._confidence_threshold),
                 self._settings.set_setting("pause_game_on_overlay", self._pause_game_on_overlay),
                 self._settings.set_setting("quick_toggle_enabled", self._quick_toggle_enabled),
             ]
@@ -1990,20 +1926,10 @@ class Plugin:
             self._input_mode = load_setting("input_mode", self._input_mode)
             self._hold_time_translate = load_setting("hold_time_translate", self._hold_time_translate)
             self._hold_time_dismiss = load_setting("hold_time_dismiss", self._hold_time_dismiss)
-            if self._settings.get_setting("custom_recognition_settings", False):
-                self._confidence_threshold = load_setting("confidence_threshold", self._confidence_threshold)
             self._pause_game_on_overlay = load_setting("pause_game_on_overlay", self._pause_game_on_overlay)
             self._quick_toggle_enabled = load_setting("quick_toggle_enabled", self._quick_toggle_enabled)
 
             os.makedirs(self._screenshotPath, exist_ok=True)
-
-            google_api_key = self._settings.get_setting("google_api_key", "")
-            if google_api_key:
-                self._google_vision_api_key = google_api_key
-                self._google_translate_api_key = google_api_key
-
-            # 互換RPC用の旧プロバイダー設定は固定既定値のまま残す。
-            # UIからは到達しないため、旧設定ファイルの provider 選択値は読み戻さない。
 
             # Gemini設定を読み込み（gemini_* > vision_llm_* > text_llm_* > llm_* の順でフォールバック）
             getter = self._settings.get_setting
@@ -2012,29 +1938,16 @@ class Plugin:
             self._gemini_model = normalize_gemini_setting(getter, "model", default="")
             self._gemini_disable_thinking = normalize_gemini_setting(getter, "disable_thinking", default=True)
             self._gemini_parallel = normalize_gemini_setting(getter, "parallel", default=True)
-            self._vision_mode = "direct"
             self._vision_coordinate_mode = self._settings.get_setting(
                 "vision_coordinate_mode",
                 self._settings.get_setting("llm_coordinate_mode", "pixel")
             )
-            self._vision_llm_base_url = self._effective_gemini_base_url()
-            self._vision_llm_api_key = self._gemini_api_key
-            self._vision_llm_model = self._gemini_model
-            self._vision_llm_disable_thinking = self._gemini_disable_thinking
-            self._vision_llm_parallel = self._gemini_parallel
             self._settings.set_setting("gemini_base_url", self._gemini_base_url)
             self._settings.set_setting("gemini_api_key", self._gemini_api_key)
             self._settings.set_setting("gemini_model", self._gemini_model)
 
-            # Initialize provider manager
+            # Initialize provider manager（Gemini Vision直結）
             self._provider_manager = ProviderManager()
-            self._provider_manager.configure(
-                use_free_providers=self._use_free_providers,
-                google_api_key=google_api_key,
-                ocr_provider=self._ocr_provider,
-                translation_provider=self._translation_provider
-            )
-
             self._provider_manager.configure_vision(
                 mode="direct",
                 base_url=self._effective_gemini_base_url(),
@@ -2054,24 +1967,17 @@ class Plugin:
 
             self._ensure_vision_common_prompt_file()
 
-            # Load and apply RapidOCR-specific settings
-            if self._settings.get_setting("custom_recognition_settings", False):
-                self._rapidocr_confidence = load_setting("rapidocr_confidence", self._rapidocr_confidence)
-                self._rapidocr_box_thresh = load_setting("rapidocr_box_thresh", self._rapidocr_box_thresh)
-                self._rapidocr_unclip_ratio = load_setting("rapidocr_unclip_ratio", self._rapidocr_unclip_ratio)
-            self._provider_manager.set_rapidocr_confidence(self._rapidocr_confidence)
-            self._provider_manager.set_rapidocr_box_thresh(self._rapidocr_box_thresh)
-            self._provider_manager.set_rapidocr_unclip_ratio(self._rapidocr_unclip_ratio)
-
             # Apply debug_mode log level
             if self._settings.get_setting("debug_mode", False):
                 logger.setLevel(logging.DEBUG)
                 logger.debug("Debug logging enabled")
 
-            provider_status = self._provider_manager.get_provider_status()
-            logger.info(f"Initialized - OCR: {provider_status.get('ocr_provider', '?')}, "
-                        f"Translation: {provider_status.get('translation_provider', '?')}, "
-                        f"Target lang: {self._target_language}")
+            logger.info(
+                f"Initialized - Gemini: model={self._gemini_model}, "
+                f"base_url={self._effective_gemini_base_url()}, "
+                f"api_key_set={bool(self._gemini_api_key)}, "
+                f"target_lang={self._target_language}"
+            )
 
             # Start hidraw button monitor
             self._hidraw_monitor = HidrawButtonMonitor()

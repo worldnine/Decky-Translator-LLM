@@ -112,16 +112,10 @@ class TestVisionDirectPromptInjection:
     """Vision Direct プロンプトの注入順テスト。
     注入順: Vision Direct固定 → 共通Vision → ゲーム別Vision"""
 
-    def test_プロンプト分離(self):
-        """Text LLMとVision LLMに異なるプロンプトが注入される"""
+    def test_共通とゲーム別プロンプトが分離注入される(self):
+        """configure_vision で共通/ゲーム別プロンプトが正しく保持される"""
         from py_modules.providers import ProviderManager
         pm = ProviderManager()
-        pm.configure_text_llm(
-            base_url="http://text",
-            model="text-m",
-            system_prompt="Text共通指示",
-            game_prompt="Textゲーム指示",
-        )
         pm.configure_vision(
             mode="direct",
             base_url="http://vision",
@@ -129,12 +123,8 @@ class TestVisionDirectPromptInjection:
             system_prompt="Vision共通指示",
             game_prompt="Visionゲーム指示",
         )
-        # Text LLM側の確認
-        assert pm._text_llm_system_prompt == "Text共通指示"
-        assert pm._text_llm_game_prompt == "Textゲーム指示"
-        # Vision LLM側の確認
-        assert pm._vision_llm_system_prompt == "Vision共通指示"
-        assert pm._vision_llm_game_prompt == "Visionゲーム指示"
+        assert pm._gemini_system_prompt == "Vision共通指示"
+        assert pm._gemini_game_prompt == "Visionゲーム指示"
 
 
 class TestPreflightPromptIsolation:

@@ -1,5 +1,5 @@
 # tests/test_provider_manager_vision.py
-# ProviderManager のVision関連テスト
+# ProviderManager のGemini Vision専用構成テスト
 
 import pytest
 from py_modules.providers import ProviderManager
@@ -10,134 +10,62 @@ class TestConfigureVision:
 
     def test_デフォルト設定(self):
         pm = ProviderManager()
-        assert pm._vision_mode == "off"
-        assert pm._vision_llm_parallel is True
-        assert pm._vision_assist_confidence_threshold == 0.95
-        assert pm._vision_assist_send_all is False
+        assert pm._vision_mode == "direct"
+        assert pm._gemini_parallel is True
+        assert pm._gemini_base_url == ""
+        assert pm._gemini_model == ""
 
     def test_モード設定(self):
         pm = ProviderManager()
-        pm.configure_vision(mode="assist")
-        assert pm._vision_mode == "assist"
+        pm.configure_vision(mode="off")
+        assert pm._vision_mode == "off"
 
     def test_部分更新(self):
         pm = ProviderManager()
         pm.configure_vision(parallel=False)
-        assert pm._vision_llm_parallel is False
-        assert pm._vision_mode == "off"  # 他は変わらない
+        assert pm._gemini_parallel is False
+        assert pm._vision_mode == "direct"  # 他は変わらない
 
     def test_全設定(self):
         pm = ProviderManager()
         pm.configure_vision(
             mode="direct",
+            base_url="http://test",
+            api_key="key",
+            model="model",
             parallel=False,
-            assist_send_all=True,
-            assist_confidence_threshold=0.8,
+            disable_thinking=False,
             coordinate_mode="normalized",
         )
         assert pm._vision_mode == "direct"
-        assert pm._vision_llm_parallel is False
-        assert pm._vision_assist_send_all is True
-        assert pm._vision_assist_confidence_threshold == 0.8
+        assert pm._gemini_base_url == "http://test"
+        assert pm._gemini_api_key == "key"
+        assert pm._gemini_model == "model"
+        assert pm._gemini_parallel is False
+        assert pm._gemini_disable_thinking is False
         assert pm._vision_coordinate_mode == "normalized"
 
-    def test_Vision_LLM接続設定(self):
+    def test_接続設定(self):
         pm = ProviderManager()
         pm.configure_vision(
-            base_url="http://vision-server",
-            api_key="vision-key",
-            model="vision-model",
+            base_url="http://gemini-server",
+            api_key="gemini-key",
+            model="gemini-model",
             disable_thinking=False,
         )
-        assert pm._vision_llm_base_url == "http://vision-server"
-        assert pm._vision_llm_api_key == "vision-key"
-        assert pm._vision_llm_model == "vision-model"
-        assert pm._vision_llm_disable_thinking is False
+        assert pm._gemini_base_url == "http://gemini-server"
+        assert pm._gemini_api_key == "gemini-key"
+        assert pm._gemini_model == "gemini-model"
+        assert pm._gemini_disable_thinking is False
 
-    def test_Vision_LLMプロンプト設定(self):
+    def test_プロンプト設定(self):
         pm = ProviderManager()
         pm.configure_vision(
-            system_prompt="vision common",
-            game_prompt="vision game",
+            system_prompt="共通プロンプト",
+            game_prompt="ゲーム別プロンプト",
         )
-        assert pm._vision_llm_system_prompt == "vision common"
-        assert pm._vision_llm_game_prompt == "vision game"
-
-
-class TestConfigureTextLlm:
-    """configure_text_llm() のテスト。"""
-
-    def test_デフォルト設定(self):
-        pm = ProviderManager()
-        assert pm._text_llm_base_url == ""
-        assert pm._text_llm_model == ""
-        assert pm._text_llm_parallel is True
-
-    def test_全設定(self):
-        pm = ProviderManager()
-        pm.configure_text_llm(
-            base_url="http://text-server",
-            api_key="text-key",
-            model="text-model",
-            system_prompt="text system",
-            game_prompt="text game",
-            disable_thinking=False,
-            parallel=False,
-        )
-        assert pm._text_llm_base_url == "http://text-server"
-        assert pm._text_llm_api_key == "text-key"
-        assert pm._text_llm_model == "text-model"
-        assert pm._text_llm_system_prompt == "text system"
-        assert pm._text_llm_game_prompt == "text game"
-        assert pm._text_llm_disable_thinking is False
-        assert pm._text_llm_parallel is False
-
-    def test_後方互換エイリアス(self):
-        """configure_llm() がconfigure_text_llm() と同じ動作をする"""
-        pm = ProviderManager()
-        pm.configure_llm(base_url="http://test", model="m1")
-        assert pm._text_llm_base_url == "http://test"
-        assert pm._text_llm_model == "m1"
-
-
-class TestTextVisionSeparation:
-    """Text LLMとVision LLMの設定分離テスト。"""
-
-    def test_独立した設定(self):
-        pm = ProviderManager()
-        pm.configure_text_llm(base_url="http://text", model="text-m")
-        pm.configure_vision(base_url="http://vision", model="vision-m")
-        assert pm._text_llm_base_url == "http://text"
-        assert pm._text_llm_model == "text-m"
-        assert pm._vision_llm_base_url == "http://vision"
-        assert pm._vision_llm_model == "vision-m"
-
-    def test_Vision未設定時はText_LLMフォールバック(self):
-        pm = ProviderManager()
-        pm.configure_text_llm(
-            base_url="http://text-server",
-            api_key="text-key",
-            model="text-model",
-        )
-        pm.configure_vision(mode="direct")
-        provider = pm.get_vision_provider()
-        assert provider is not None
-        # Vision LLM未設定なのでText LLMにフォールバック
-        assert provider._client.base_url == "http://text-server"
-        assert provider._client.api_key == "text-key"
-        assert provider._client.model == "text-model"
-
-    def test_Vision設定がText_LLMに影響しない(self):
-        pm = ProviderManager()
-        pm.configure_text_llm(base_url="http://text", model="text-m")
-        pm.configure_vision(
-            mode="direct",
-            base_url="http://vision",
-            model="vision-m",
-        )
-        # Text LLMは変わらない
-        assert pm._text_llm_base_url == "http://text"
-        assert pm._text_llm_model == "text-m"
+        assert pm._gemini_system_prompt == "共通プロンプト"
+        assert pm._gemini_game_prompt == "ゲーム別プロンプト"
 
 
 class TestGetVisionProvider:
@@ -148,43 +76,38 @@ class TestGetVisionProvider:
         pm.configure_vision(mode="off")
         assert pm.get_vision_provider() is None
 
-    def test_assistの場合Provider返却(self):
+    def test_directの場合Provider返却(self):
         pm = ProviderManager()
-        pm.configure_text_llm(base_url="http://localhost", model="test")
-        pm.configure_vision(mode="assist")
+        pm.configure_vision(
+            mode="direct",
+            base_url="http://localhost",
+            model="test",
+        )
         provider = pm.get_vision_provider()
         assert provider is not None
         assert provider.is_available() is True
 
-    def test_Text_LLM設定フォールバック(self):
+    def test_設定が反映される(self):
         pm = ProviderManager()
-        pm.configure_text_llm(base_url="http://llm-server", api_key="llm-key", model="llm-model")
-        pm.configure_vision(mode="direct")
-        provider = pm.get_vision_provider()
-        assert provider is not None
-        assert provider._client.base_url == "http://llm-server"
-        assert provider._client.api_key == "llm-key"
-        assert provider._client.model == "llm-model"
-
-    def test_Vision専用設定が優先(self):
-        pm = ProviderManager()
-        pm.configure_text_llm(base_url="http://text", api_key="text-key", model="text-m")
         pm.configure_vision(
             mode="direct",
-            base_url="http://vision",
-            api_key="vision-key",
-            model="vision-m",
+            base_url="http://gemini",
+            api_key="key",
+            model="model",
         )
         provider = pm.get_vision_provider()
         assert provider is not None
-        assert provider._client.base_url == "http://vision"
-        assert provider._client.api_key == "vision-key"
-        assert provider._client.model == "vision-m"
+        assert provider._client.base_url == "http://gemini"
+        assert provider._client.api_key == "key"
+        assert provider._client.model == "model"
 
     def test_キャッシュ(self):
         pm = ProviderManager()
-        pm.configure_text_llm(base_url="http://localhost", model="test")
-        pm.configure_vision(mode="direct")
+        pm.configure_vision(
+            mode="direct",
+            base_url="http://localhost",
+            model="test",
+        )
         p1 = pm.get_vision_provider()
         p2 = pm.get_vision_provider()
         assert p1 is p2  # 同一インスタンス
@@ -235,21 +158,21 @@ class TestPreflightVisionCheck:
         """mode引数を指定すると、_vision_mode=offでも一時Providerでpreflight検証できる"""
         import asyncio
         pm = ProviderManager()
-        pm.configure_text_llm(base_url="http://localhost", model="test")
-        pm.configure_vision(mode="off")
+        pm.configure_vision(
+            mode="off",
+            base_url="http://localhost",
+            model="test",
+        )
         # mode引数なしだとFalse（offなので）
         result_without = asyncio.get_event_loop().run_until_complete(pm.preflight_vision_check())
         assert result_without["ok"] is False
-        # mode引数ありだとProviderは生成される（APIは叩かないがis_available()はTrue）
+        # mode引数ありだとProviderは生成される
         result_with = asyncio.get_event_loop().run_until_complete(pm.preflight_vision_check(mode="direct"))
-        # preflight_check自体はAPIを叩くので接続エラーになるが、
-        # "Vision Providerが設定されていません" にはならない
         assert "Vision Providerが設定されていません" not in result_with.get("message", "")
 
     def test_未設定provider(self):
         import asyncio
         pm = ProviderManager()
-        pm.configure_vision(mode="direct")
-        # LLM設定もVision設定もない → is_available() == False
+        # base_url も model も未設定 → is_available() == False
         result = asyncio.get_event_loop().run_until_complete(pm.preflight_vision_check())
         assert result["ok"] is False
