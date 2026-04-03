@@ -1015,23 +1015,23 @@ class Plugin:
             elif key == "text_llm_base_url":
                 self._text_llm_base_url = value
                 if self._provider_manager:
-                    self._provider_manager.configure_llm(base_url=value)
+                    self._provider_manager.configure_text_llm(base_url=value)
             elif key == "text_llm_api_key":
                 self._text_llm_api_key = value
                 if self._provider_manager:
-                    self._provider_manager.configure_llm(api_key=value)
+                    self._provider_manager.configure_text_llm(api_key=value)
             elif key == "text_llm_model":
                 self._text_llm_model = value
                 if self._provider_manager:
-                    self._provider_manager.configure_llm(model=value)
+                    self._provider_manager.configure_text_llm(model=value)
             elif key == "text_llm_disable_thinking":
                 self._text_llm_disable_thinking = value
                 if self._provider_manager:
-                    self._provider_manager.configure_llm(disable_thinking=value)
+                    self._provider_manager.configure_text_llm(disable_thinking=value)
             elif key == "text_llm_parallel":
                 self._text_llm_parallel = value
                 if self._provider_manager:
-                    self._provider_manager.configure_llm(parallel=value)
+                    self._provider_manager.configure_text_llm(parallel=value)
             # 旧キー互換（text_llm_* にマッピング）
             elif key == "llm_base_url":
                 return await self.set_setting("text_llm_base_url", value)
@@ -1046,7 +1046,7 @@ class Plugin:
             elif key == "llm_system_prompt":
                 self._llm_system_prompt = value
                 if self._provider_manager:
-                    self._provider_manager.configure_llm(system_prompt=value)
+                    self._provider_manager.configure_text_llm(system_prompt=value)
             # Vision LLM設定
             elif key == "vision_llm_base_url":
                 self._vision_llm_base_url = value
@@ -1062,8 +1062,8 @@ class Plugin:
                     self._provider_manager.configure_vision(model=value)
             elif key == "vision_llm_disable_thinking":
                 self._vision_llm_disable_thinking = value
-                # Vision providerのdisable_thinkingはconfigure_visionに渡さない
-                # （現在はconfigure_llmのdisable_thinkingをVisionにも適用するフォールバック構造）
+                if self._provider_manager:
+                    self._provider_manager.configure_vision(disable_thinking=value)
             elif key == "vision_llm_parallel":
                 self._vision_llm_parallel = value
                 if self._provider_manager:
@@ -1107,10 +1107,11 @@ class Plugin:
         return "\n".join(lines).strip()
 
     def _apply_game_prompt(self, game_prompt: str):
-        """ゲーム別プロンプトをLLMに適用する（グローバルプロンプトとは別フィールド）"""
+        """ゲーム別プロンプトをText LLMとVision LLMの両方に適用する"""
         self._current_game_prompt = game_prompt
         if self._provider_manager:
-            self._provider_manager.configure_llm(game_prompt=game_prompt)
+            self._provider_manager.configure_text_llm(game_prompt=game_prompt)
+            self._provider_manager.configure_vision(game_prompt=game_prompt)
 
     async def ensure_game_prompt_file(self, app_id: int, display_name: str):
         """ゲーム別プロンプトファイルを確保し、内容を読み込んでプロンプトを適用する"""
@@ -2049,7 +2050,7 @@ class Plugin:
 
             # Text LLM設定をプロバイダーマネージャーに適用
             if self._text_llm_base_url or self._text_llm_model:
-                self._provider_manager.configure_llm(
+                self._provider_manager.configure_text_llm(
                     base_url=self._text_llm_base_url,
                     api_key=self._text_llm_api_key,
                     model=self._text_llm_model,
@@ -2064,6 +2065,7 @@ class Plugin:
                 base_url=self._vision_llm_base_url,
                 api_key=self._vision_llm_api_key,
                 model=self._vision_llm_model,
+                disable_thinking=self._vision_llm_disable_thinking,
                 parallel=self._vision_llm_parallel,
                 assist_confidence_threshold=self._vision_assist_confidence_threshold,
                 assist_send_all=self._vision_assist_send_all,

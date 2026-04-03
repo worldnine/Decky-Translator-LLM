@@ -71,28 +71,33 @@ class ProviderManager:
         self._rapidocr_box_thresh = 0.5
         self._rapidocr_unclip_ratio = 1.6
 
-        # LLM翻訳プロバイダー設定（テキスト翻訳用）
-        self._llm_base_url = ""
-        self._llm_api_key = ""
-        self._llm_model = ""
-        self._llm_system_prompt = ""
-        self._llm_game_prompt = ""
-        self._llm_disable_thinking = True
-        self._llm_parallel = True  # LLMテキスト翻訳のバッチ並列制御（Vision parallelとは独立）
+        # Text LLM設定（テキスト翻訳用）
+        self._text_llm_base_url = ""
+        self._text_llm_api_key = ""
+        self._text_llm_model = ""
+        self._text_llm_system_prompt = ""
+        self._text_llm_game_prompt = ""
+        self._text_llm_disable_thinking = True
+        self._text_llm_parallel = True
 
-        # Vision設定（OCR/Translation とは独立）
+        # Vision LLM設定（空ならText LLM設定をフォールバック）
+        self._vision_llm_base_url = ""
+        self._vision_llm_api_key = ""
+        self._vision_llm_model = ""
+        self._vision_llm_disable_thinking = True
+        self._vision_llm_parallel = True
+        self._vision_llm_system_prompt = ""
+        self._vision_llm_game_prompt = ""
+
+        # Visionモード設定
         self._vision_mode = "off"  # "off", "assist", "direct"
-        self._vision_base_url = ""  # 空ならLLM設定をフォールバック
-        self._vision_api_key = ""
-        self._vision_model = ""
-        self._vision_parallel = True
         self._vision_assist_confidence_threshold = 0.95
         self._vision_assist_send_all = False
         self._vision_coordinate_mode = "pixel"
 
         logger.debug("ProviderManager initialized")
 
-    def configure_llm(
+    def configure_text_llm(
         self,
         base_url: str = None,
         api_key: str = None,
@@ -102,21 +107,21 @@ class ProviderManager:
         disable_thinking: bool = None,
         parallel: bool = None,
     ) -> None:
-        """LLM翻訳プロバイダーの設定を更新する（テキスト翻訳用）。"""
+        """Text LLM翻訳プロバイダーの設定を更新する。"""
         if base_url is not None:
-            self._llm_base_url = base_url
+            self._text_llm_base_url = base_url
         if api_key is not None:
-            self._llm_api_key = api_key
+            self._text_llm_api_key = api_key
         if model is not None:
-            self._llm_model = model
+            self._text_llm_model = model
         if system_prompt is not None:
-            self._llm_system_prompt = system_prompt
+            self._text_llm_system_prompt = system_prompt
         if game_prompt is not None:
-            self._llm_game_prompt = game_prompt
+            self._text_llm_game_prompt = game_prompt
         if disable_thinking is not None:
-            self._llm_disable_thinking = disable_thinking
+            self._text_llm_disable_thinking = disable_thinking
         if parallel is not None:
-            self._llm_parallel = parallel
+            self._text_llm_parallel = parallel
 
         # 既存のLLMプロバイダーインスタンスがあれば更新
         llm_provider = self._translation_providers.get(ProviderType.LLM)
@@ -129,14 +134,17 @@ class ProviderManager:
                 parallel=parallel,
             )
 
-        # Vision ProviderがLLM設定をフォールバックしている場合も更新
+        # Vision ProviderがText LLM設定をフォールバックしている場合も更新
         if self._vision_provider:
             self._update_vision_provider_config()
 
         logger.debug(
-            f"LLM config updated: base_url={self._llm_base_url}, "
-            f"model={self._llm_model}, disable_thinking={self._llm_disable_thinking}"
+            f"Text LLM config updated: base_url={self._text_llm_base_url}, "
+            f"model={self._text_llm_model}, disable_thinking={self._text_llm_disable_thinking}"
         )
+
+    # 後方互換: main.py から configure_llm() で呼ばれる既存コード用
+    configure_llm = configure_text_llm
 
     def configure_vision(
         self,
@@ -144,22 +152,31 @@ class ProviderManager:
         base_url: str = None,
         api_key: str = None,
         model: str = None,
+        disable_thinking: bool = None,
         parallel: bool = None,
+        system_prompt: str = None,
+        game_prompt: str = None,
         assist_send_all: bool = None,
         assist_confidence_threshold: float = None,
         coordinate_mode: str = None,
     ) -> None:
-        """Vision設定を更新する。"""
+        """Vision LLM設定とVisionモード設定を更新する。"""
         if mode is not None:
             self._vision_mode = mode
         if base_url is not None:
-            self._vision_base_url = base_url
+            self._vision_llm_base_url = base_url
         if api_key is not None:
-            self._vision_api_key = api_key
+            self._vision_llm_api_key = api_key
         if model is not None:
-            self._vision_model = model
+            self._vision_llm_model = model
+        if disable_thinking is not None:
+            self._vision_llm_disable_thinking = disable_thinking
         if parallel is not None:
-            self._vision_parallel = parallel
+            self._vision_llm_parallel = parallel
+        if system_prompt is not None:
+            self._vision_llm_system_prompt = system_prompt
+        if game_prompt is not None:
+            self._vision_llm_game_prompt = game_prompt
         if assist_send_all is not None:
             self._vision_assist_send_all = assist_send_all
         if assist_confidence_threshold is not None:
@@ -173,22 +190,22 @@ class ProviderManager:
 
         logger.debug(
             f"Vision config updated: mode={self._vision_mode}, "
-            f"parallel={self._vision_parallel}, "
+            f"parallel={self._vision_llm_parallel}, "
             f"assist_threshold={self._vision_assist_confidence_threshold}"
         )
 
     def _update_vision_provider_config(self) -> None:
         """Vision Providerの設定を現在の状態に合わせて更新する。
-        Vision専用設定が空ならLLM設定をフォールバック。"""
+        Vision LLM専用設定が空ならText LLM設定をフォールバック。"""
         if not self._vision_provider:
             return
         self._vision_provider.configure(
-            base_url=self._vision_base_url or self._llm_base_url,
-            api_key=self._vision_api_key or self._llm_api_key,
-            model=self._vision_model or self._llm_model,
-            disable_thinking=self._llm_disable_thinking,
-            custom_prompt=self._llm_system_prompt,
-            game_prompt=self._llm_game_prompt,
+            base_url=self._vision_llm_base_url or self._text_llm_base_url,
+            api_key=self._vision_llm_api_key or self._text_llm_api_key,
+            model=self._vision_llm_model or self._text_llm_model,
+            disable_thinking=self._vision_llm_disable_thinking,
+            custom_prompt=self._vision_llm_system_prompt or self._text_llm_system_prompt,
+            game_prompt=self._vision_llm_game_prompt or self._text_llm_game_prompt,
         )
 
     def configure(
@@ -292,33 +309,33 @@ class ProviderManager:
                 )
             elif provider_type == ProviderType.LLM:
                 provider = LlmTranslateProvider(
-                    base_url=self._llm_base_url,
-                    api_key=self._llm_api_key,
-                    model=self._llm_model,
-                    system_prompt=self._llm_system_prompt,
-                    disable_thinking=self._llm_disable_thinking,
-                    parallel=self._llm_parallel,
+                    base_url=self._text_llm_base_url,
+                    api_key=self._text_llm_api_key,
+                    model=self._text_llm_model,
+                    system_prompt=self._text_llm_system_prompt,
+                    disable_thinking=self._text_llm_disable_thinking,
+                    parallel=self._text_llm_parallel,
                 )
-                if self._llm_game_prompt:
-                    provider.configure(game_prompt=self._llm_game_prompt)
+                if self._text_llm_game_prompt:
+                    provider.configure(game_prompt=self._text_llm_game_prompt)
                 self._translation_providers[provider_type] = provider
 
         return self._translation_providers.get(provider_type)
 
     def get_vision_provider(self) -> Optional[GeminiVisionProvider]:
         """Vision Providerを取得する。vision_mode=="off"ならNoneを返す。
-        Vision専用設定が空の場合、LLM設定をフォールバックとして使用する。"""
+        Vision LLM専用設定が空の場合、Text LLM設定をフォールバックとして使用する。"""
         if self._vision_mode == "off":
             return None
 
         if self._vision_provider is None:
             self._vision_provider = GeminiVisionProvider(
-                base_url=self._vision_base_url or self._llm_base_url,
-                api_key=self._vision_api_key or self._llm_api_key,
-                model=self._vision_model or self._llm_model,
-                disable_thinking=self._llm_disable_thinking,
-                custom_prompt=self._llm_system_prompt,
-                game_prompt=self._llm_game_prompt,
+                base_url=self._vision_llm_base_url or self._text_llm_base_url,
+                api_key=self._vision_llm_api_key or self._text_llm_api_key,
+                model=self._vision_llm_model or self._text_llm_model,
+                disable_thinking=self._vision_llm_disable_thinking,
+                custom_prompt=self._vision_llm_system_prompt or self._text_llm_system_prompt,
+                game_prompt=self._vision_llm_game_prompt or self._text_llm_game_prompt,
             )
         return self._vision_provider
 
@@ -421,7 +438,7 @@ class ProviderManager:
         async def _image_task():
             if not low_conf_indices:
                 return
-            if self._vision_parallel:
+            if self._vision_llm_parallel:
                 await self._vision_assist_parallel(
                     translation_provider, vision_provider,
                     texts, text_regions, image_bytes,
