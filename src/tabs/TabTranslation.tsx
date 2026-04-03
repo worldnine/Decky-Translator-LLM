@@ -421,7 +421,7 @@ export const TabTranslation: VFC = () => {
                                     <div>- Context-aware, high-quality translation</div>
                                     <div>- Supports Gemini, GPT, DeepSeek, Ollama, etc.</div>
                                     <div>- Requires API Key, Base URL, and Model name</div>
-                                    {(!settings.llmBaseUrl || !settings.llmModel) && (
+                                    {(!settings.textLlmBaseUrl || !settings.textLlmModel) && (
                                         <div style={{ color: "#ff6b6b", marginTop: "4px" }}>Please configure Base URL and Model name</div>
                                     )}
                                 </>
@@ -433,20 +433,20 @@ export const TabTranslation: VFC = () => {
                 {settings.translationProvider === 'llm' && (
                     <>
                         <PanelSectionRow>
-                            <Field label="LLM Base URL" childrenContainerWidth="max">
+                            <Field label="Text LLM Base URL" childrenContainerWidth="max">
                                 <TextField
-                                    value={settings.llmBaseUrl}
-                                    onChange={(e) => updateSetting('llmBaseUrl', e.target.value, 'LLM Base URL')}
+                                    value={settings.textLlmBaseUrl}
+                                    onChange={(e) => updateSetting('textLlmBaseUrl', e.target.value, 'Text LLM Base URL')}
                                     bShowClearAction={true}
                                     description="e.g. https://api.openai.com/v1, http://localhost:11434/v1"
                                 />
                             </Field>
                         </PanelSectionRow>
                         <PanelSectionRow>
-                            <Field label="LLM API Key" childrenContainerWidth="max">
+                            <Field label="Text LLM API Key" childrenContainerWidth="max">
                                 <TextField
-                                    value={settings.llmApiKey}
-                                    onChange={(e) => updateSetting('llmApiKey', e.target.value, 'LLM API Key')}
+                                    value={settings.textLlmApiKey}
+                                    onChange={(e) => updateSetting('textLlmApiKey', e.target.value, 'Text LLM API Key')}
                                     bShowClearAction={true}
                                     bIsPassword={true}
                                     description="Leave empty for local servers like Ollama"
@@ -454,10 +454,10 @@ export const TabTranslation: VFC = () => {
                             </Field>
                         </PanelSectionRow>
                         <PanelSectionRow>
-                            <Field label="LLM Model" childrenContainerWidth="max">
+                            <Field label="Text LLM Model" childrenContainerWidth="max">
                                 <TextField
-                                    value={settings.llmModel}
-                                    onChange={(e) => updateSetting('llmModel', e.target.value, 'LLM Model')}
+                                    value={settings.textLlmModel}
+                                    onChange={(e) => updateSetting('textLlmModel', e.target.value, 'Text LLM Model')}
                                     bShowClearAction={true}
                                     description="e.g. gemini-2.5-flash-lite, gpt-5.4-mini, deepseek-chat"
                                 />
@@ -475,17 +475,17 @@ export const TabTranslation: VFC = () => {
                         </PanelSectionRow>
                         <PanelSectionRow>
                             <ToggleField
-                                label="Parallel API Calls"
-                                checked={settings.llmParallel}
-                                onChange={(value) => updateSetting('llmParallel', value, 'LLM Parallel')}
-                                description="Run LLM API calls in parallel for batch translation fallback. Disable for local servers like Ollama."
+                                label="Text Parallel API Calls"
+                                checked={settings.textLlmParallel}
+                                onChange={(value) => updateSetting('textLlmParallel', value, 'Text LLM Parallel')}
+                                description="Run text LLM API calls in parallel for batch translation. Disable for local servers like Ollama."
                             />
                         </PanelSectionRow>
                         <PanelSectionRow>
                             <ToggleField
-                                label="Disable Thinking Mode"
-                                checked={settings.llmDisableThinking}
-                                onChange={(value) => updateSetting('llmDisableThinking', value, 'LLM Disable Thinking')}
+                                label="Text Disable Thinking Mode"
+                                checked={settings.textLlmDisableThinking}
+                                onChange={(value) => updateSetting('textLlmDisableThinking', value, 'Text LLM Disable Thinking')}
                                 description="Suppress thinking process in DeepSeek-R1, Qwen3, etc. to improve speed and reduce cost"
                             />
                         </PanelSectionRow>
@@ -516,9 +516,9 @@ export const TabTranslation: VFC = () => {
                         {settings.visionMode !== 'off' && (
                             <PanelSectionRow>
                                 <ToggleField
-                                    label="Parallel API Calls"
-                                    checked={settings.visionParallel}
-                                    onChange={(value) => updateSetting('visionParallel', value, 'Vision Parallel')}
+                                    label="Vision Parallel API Calls"
+                                    checked={settings.visionLlmParallel}
+                                    onChange={(value) => updateSetting('visionLlmParallel', value, 'Vision LLM Parallel')}
                                     description="Run Vision API calls in parallel. Faster with cloud APIs. Disable for local servers like Ollama."
                                 />
                             </PanelSectionRow>

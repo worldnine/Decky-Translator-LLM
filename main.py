@@ -880,17 +880,23 @@ class Plugin:
     _google_vision_api_key: str = ""
     _google_translate_api_key: str = ""
 
-    # LLM翻訳プロバイダー設定（テキスト翻訳用）
-    _llm_base_url: str = ""
-    _llm_api_key: str = ""
-    _llm_model: str = ""
+    # Text LLM設定（テキスト翻訳用）
+    _text_llm_base_url: str = ""
+    _text_llm_api_key: str = ""
+    _text_llm_model: str = ""
+    _text_llm_disable_thinking: bool = True
+    _text_llm_parallel: bool = True
+    # Vision LLM設定（Vision翻訳用、空ならText LLM設定をフォールバック）
+    _vision_llm_base_url: str = ""
+    _vision_llm_api_key: str = ""
+    _vision_llm_model: str = ""
+    _vision_llm_disable_thinking: bool = True
+    _vision_llm_parallel: bool = True
+    # 共通プロンプト（後のコミットでファイルベースに移行予定）
     _llm_system_prompt: str = ""
-    _llm_disable_thinking: bool = True
-    _llm_parallel: bool = True  # LLMバッチ翻訳の並列制御（Vision parallelとは独立）
 
     # Vision設定（OCR/Translationとは独立）
     _vision_mode: str = "off"  # "off", "assist", "direct"
-    _vision_parallel: bool = True
     _vision_assist_confidence_threshold: float = 0.95
     _vision_assist_send_all: bool = False
     _vision_coordinate_mode: str = "pixel"
@@ -1005,39 +1011,71 @@ class Plugin:
                         ocr_provider=self._ocr_provider,
                         translation_provider=value
                     )
-            elif key == "llm_base_url":
-                self._llm_base_url = value
+            # Text LLM設定
+            elif key == "text_llm_base_url":
+                self._text_llm_base_url = value
                 if self._provider_manager:
                     self._provider_manager.configure_llm(base_url=value)
-            elif key == "llm_api_key":
-                self._llm_api_key = value
+            elif key == "text_llm_api_key":
+                self._text_llm_api_key = value
                 if self._provider_manager:
                     self._provider_manager.configure_llm(api_key=value)
-            elif key == "llm_model":
-                self._llm_model = value
+            elif key == "text_llm_model":
+                self._text_llm_model = value
                 if self._provider_manager:
                     self._provider_manager.configure_llm(model=value)
+            elif key == "text_llm_disable_thinking":
+                self._text_llm_disable_thinking = value
+                if self._provider_manager:
+                    self._provider_manager.configure_llm(disable_thinking=value)
+            elif key == "text_llm_parallel":
+                self._text_llm_parallel = value
+                if self._provider_manager:
+                    self._provider_manager.configure_llm(parallel=value)
+            # 旧キー互換（text_llm_* にマッピング）
+            elif key == "llm_base_url":
+                return await self.set_setting("text_llm_base_url", value)
+            elif key == "llm_api_key":
+                return await self.set_setting("text_llm_api_key", value)
+            elif key == "llm_model":
+                return await self.set_setting("text_llm_model", value)
+            elif key == "llm_disable_thinking":
+                return await self.set_setting("text_llm_disable_thinking", value)
+            elif key == "llm_parallel":
+                return await self.set_setting("text_llm_parallel", value)
             elif key == "llm_system_prompt":
                 self._llm_system_prompt = value
                 if self._provider_manager:
                     self._provider_manager.configure_llm(system_prompt=value)
-            elif key == "llm_disable_thinking":
-                self._llm_disable_thinking = value
+            # Vision LLM設定
+            elif key == "vision_llm_base_url":
+                self._vision_llm_base_url = value
                 if self._provider_manager:
-                    self._provider_manager.configure_llm(disable_thinking=value)
-            elif key == "llm_parallel":
-                self._llm_parallel = value
+                    self._provider_manager.configure_vision(base_url=value)
+            elif key == "vision_llm_api_key":
+                self._vision_llm_api_key = value
                 if self._provider_manager:
-                    self._provider_manager.configure_llm(parallel=value)
-            # Vision設定
+                    self._provider_manager.configure_vision(api_key=value)
+            elif key == "vision_llm_model":
+                self._vision_llm_model = value
+                if self._provider_manager:
+                    self._provider_manager.configure_vision(model=value)
+            elif key == "vision_llm_disable_thinking":
+                self._vision_llm_disable_thinking = value
+                # Vision providerのdisable_thinkingはconfigure_visionに渡さない
+                # （現在はconfigure_llmのdisable_thinkingをVisionにも適用するフォールバック構造）
+            elif key == "vision_llm_parallel":
+                self._vision_llm_parallel = value
+                if self._provider_manager:
+                    self._provider_manager.configure_vision(parallel=value)
+            # 旧キー互換（vision_parallel → vision_llm_parallel）
+            elif key == "vision_parallel":
+                return await self.set_setting("vision_llm_parallel", value)
+            # Vision モード設定
             elif key == "vision_mode":
                 self._vision_mode = value
                 if self._provider_manager:
                     self._provider_manager.configure_vision(mode=value)
-            elif key == "vision_parallel":
-                self._vision_parallel = value
-                if self._provider_manager:
-                    self._provider_manager.configure_vision(parallel=value)
             elif key == "vision_assist_confidence_threshold":
                 self._vision_assist_confidence_threshold = value
                 if self._provider_manager:
@@ -1169,14 +1207,22 @@ class Plugin:
                 "hide_identical_translations": self._settings.get_setting("hide_identical_translations", False),
                 "allow_label_growth": self._settings.get_setting("allow_label_growth", False),
                 "custom_recognition_settings": self._settings.get_setting("custom_recognition_settings", False),
-                "llm_base_url": self._llm_base_url,
-                "llm_api_key": self._llm_api_key,
-                "llm_model": self._llm_model,
+                # Text LLM設定
+                "text_llm_base_url": self._text_llm_base_url,
+                "text_llm_api_key": self._text_llm_api_key,
+                "text_llm_model": self._text_llm_model,
+                "text_llm_disable_thinking": self._text_llm_disable_thinking,
+                "text_llm_parallel": self._text_llm_parallel,
+                # Vision LLM設定
+                "vision_llm_base_url": self._vision_llm_base_url,
+                "vision_llm_api_key": self._vision_llm_api_key,
+                "vision_llm_model": self._vision_llm_model,
+                "vision_llm_disable_thinking": self._vision_llm_disable_thinking,
+                "vision_llm_parallel": self._vision_llm_parallel,
+                # 共通プロンプト
                 "llm_system_prompt": self._llm_system_prompt,
-                "llm_disable_thinking": self._llm_disable_thinking,
-                "llm_parallel": self._llm_parallel,
+                # Vision設定
                 "vision_mode": self._vision_mode,
-                "vision_parallel": self._vision_parallel,
                 "vision_assist_confidence_threshold": self._vision_assist_confidence_threshold,
                 "vision_assist_send_all": self._vision_assist_send_all,
             }
@@ -1925,13 +1971,39 @@ class Plugin:
                     self._translation_provider = "freegoogle"
                 self._settings.set_setting("translation_provider", self._translation_provider)
 
-            # LLM翻訳プロバイダー設定を読み込み
-            self._llm_base_url = self._settings.get_setting("llm_base_url", "")
-            self._llm_api_key = self._settings.get_setting("llm_api_key", "")
-            self._llm_model = self._settings.get_setting("llm_model", "")
+            # Text LLM設定を読み込み（旧 llm_* キーからのフォールバック付き）
+            self._text_llm_base_url = self._settings.get_setting(
+                "text_llm_base_url",
+                self._settings.get_setting("llm_base_url", "")
+            )
+            self._text_llm_api_key = self._settings.get_setting(
+                "text_llm_api_key",
+                self._settings.get_setting("llm_api_key", "")
+            )
+            self._text_llm_model = self._settings.get_setting(
+                "text_llm_model",
+                self._settings.get_setting("llm_model", "")
+            )
+            self._text_llm_disable_thinking = self._settings.get_setting(
+                "text_llm_disable_thinking",
+                self._settings.get_setting("llm_disable_thinking", True)
+            )
+            self._text_llm_parallel = self._settings.get_setting(
+                "text_llm_parallel",
+                self._settings.get_setting("llm_parallel", True)
+            )
+            # Vision LLM設定を読み込み（空ならText LLMからフォールバック）
+            self._vision_llm_base_url = self._settings.get_setting("vision_llm_base_url", "")
+            self._vision_llm_api_key = self._settings.get_setting("vision_llm_api_key", "")
+            self._vision_llm_model = self._settings.get_setting("vision_llm_model", "")
+            self._vision_llm_disable_thinking = self._settings.get_setting("vision_llm_disable_thinking", True)
+            self._vision_llm_parallel = self._settings.get_setting(
+                "vision_llm_parallel",
+                self._settings.get_setting("vision_parallel",
+                    self._settings.get_setting("llm_parallel", True))
+            )
+            # 共通プロンプト
             self._llm_system_prompt = self._settings.get_setting("llm_system_prompt", "")
-            self._llm_disable_thinking = self._settings.get_setting("llm_disable_thinking", True)
-            self._llm_parallel = self._settings.get_setting("llm_parallel", True)
 
             # Vision設定を読み込み（旧設定からの自動マイグレーション付き）
             saved_vision_mode = self._settings.get_setting("vision_mode", None)
@@ -1953,10 +2025,6 @@ class Plugin:
                 logger.info(f"設定マイグレーション: vision_mode={self._vision_mode} "
                            f"(旧: llm_vision_translation={old_vision}, llm_image_rerecognition={old_assist})")
 
-            self._vision_parallel = self._settings.get_setting(
-                "vision_parallel",
-                self._settings.get_setting("llm_parallel", True)  # 旧設定フォールバック
-            )
             self._vision_assist_confidence_threshold = self._settings.get_setting(
                 "vision_assist_confidence_threshold",
                 self._settings.get_setting("llm_image_confidence_threshold", 0.95)
@@ -1979,21 +2047,24 @@ class Plugin:
                 translation_provider=self._translation_provider
             )
 
-            # LLM設定をプロバイダーマネージャーに適用
-            if self._llm_base_url or self._llm_model:
+            # Text LLM設定をプロバイダーマネージャーに適用
+            if self._text_llm_base_url or self._text_llm_model:
                 self._provider_manager.configure_llm(
-                    base_url=self._llm_base_url,
-                    api_key=self._llm_api_key,
-                    model=self._llm_model,
+                    base_url=self._text_llm_base_url,
+                    api_key=self._text_llm_api_key,
+                    model=self._text_llm_model,
                     system_prompt=self._llm_system_prompt,
-                    disable_thinking=self._llm_disable_thinking,
-                    parallel=self._llm_parallel,
+                    disable_thinking=self._text_llm_disable_thinking,
+                    parallel=self._text_llm_parallel,
                 )
 
             # Vision設定をプロバイダーマネージャーに適用
             self._provider_manager.configure_vision(
                 mode=self._vision_mode,
-                parallel=self._vision_parallel,
+                base_url=self._vision_llm_base_url,
+                api_key=self._vision_llm_api_key,
+                model=self._vision_llm_model,
+                parallel=self._vision_llm_parallel,
                 assist_confidence_threshold=self._vision_assist_confidence_threshold,
                 assist_send_all=self._vision_assist_send_all,
                 coordinate_mode=self._vision_coordinate_mode,

@@ -24,16 +24,22 @@ export interface Settings {
     ocrProvider: 'rapidocr' | 'ocrspace' | 'googlecloud';
     translationProvider: 'freegoogle' | 'googlecloud' | 'llm';
     googleApiKey: string;
-    // LLM翻訳設定（テキスト翻訳用）
-    llmBaseUrl: string;
-    llmApiKey: string;
-    llmModel: string;
+    // Text LLM設定（テキスト翻訳用）
+    textLlmBaseUrl: string;
+    textLlmApiKey: string;
+    textLlmModel: string;
+    textLlmDisableThinking: boolean;
+    textLlmParallel: boolean;
+    // Vision LLM設定（Vision翻訳用、空ならText LLM設定をフォールバック）
+    visionLlmBaseUrl: string;
+    visionLlmApiKey: string;
+    visionLlmModel: string;
+    visionLlmDisableThinking: boolean;
+    visionLlmParallel: boolean;
+    // 共通プロンプト（後のコミットでファイルベースに移行予定）
     llmSystemPrompt: string;
-    llmDisableThinking: boolean;
-    llmParallel: boolean; // LLMバッチ翻訳の並列制御（Vision parallelとは独立）
     // Vision設定（OCR/Translationとは独立）
     visionMode: 'off' | 'assist' | 'direct';
-    visionParallel: boolean;
     visionAssistSendAll: boolean;
     visionAssistConfidenceThreshold: number;
     // 表示設定
@@ -70,14 +76,18 @@ const initialSettings: Settings = {
     ocrProvider: "rapidocr",
     translationProvider: "freegoogle",
     googleApiKey: "",
-    llmBaseUrl: "",
-    llmApiKey: "",
-    llmModel: "",
+    textLlmBaseUrl: "",
+    textLlmApiKey: "",
+    textLlmModel: "",
+    textLlmDisableThinking: true,
+    textLlmParallel: true,
+    visionLlmBaseUrl: "",
+    visionLlmApiKey: "",
+    visionLlmModel: "",
+    visionLlmDisableThinking: true,
+    visionLlmParallel: true,
     llmSystemPrompt: "",
-    llmDisableThinking: true,
-    llmParallel: true,
     visionMode: "off",
-    visionParallel: true,
     visionAssistSendAll: false,
     visionAssistConfidenceThreshold: 0.95,
     debugMode: false,
@@ -148,14 +158,18 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                     ocrProvider: serverSettings.ocr_provider || "rapidocr",
                     translationProvider: serverSettings.translation_provider || "freegoogle",
                     googleApiKey: serverSettings.google_api_key || "",
-                    llmBaseUrl: serverSettings.llm_base_url || "",
-                    llmApiKey: serverSettings.llm_api_key || "",
-                    llmModel: serverSettings.llm_model || "",
+                    textLlmBaseUrl: serverSettings.text_llm_base_url || "",
+                    textLlmApiKey: serverSettings.text_llm_api_key || "",
+                    textLlmModel: serverSettings.text_llm_model || "",
+                    textLlmDisableThinking: serverSettings.text_llm_disable_thinking ?? true,
+                    textLlmParallel: serverSettings.text_llm_parallel ?? true,
+                    visionLlmBaseUrl: serverSettings.vision_llm_base_url || "",
+                    visionLlmApiKey: serverSettings.vision_llm_api_key || "",
+                    visionLlmModel: serverSettings.vision_llm_model || "",
+                    visionLlmDisableThinking: serverSettings.vision_llm_disable_thinking ?? true,
+                    visionLlmParallel: serverSettings.vision_llm_parallel ?? true,
                     llmSystemPrompt: serverSettings.llm_system_prompt || "",
-                    llmDisableThinking: serverSettings.llm_disable_thinking ?? true,
-                    llmParallel: serverSettings.llm_parallel ?? true,
                     visionMode: serverSettings.vision_mode ?? "off",
-                    visionParallel: serverSettings.vision_parallel ?? true,
                     visionAssistSendAll: serverSettings.vision_assist_send_all ?? false,
                     visionAssistConfidenceThreshold: serverSettings.vision_assist_confidence_threshold ?? 0.95,
                     debugMode: serverSettings.debug_mode || false,
@@ -229,14 +243,18 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                 ocrProvider: 'ocr_provider',
                 translationProvider: 'translation_provider',
                 googleApiKey: 'google_api_key',
-                llmBaseUrl: 'llm_base_url',
-                llmApiKey: 'llm_api_key',
-                llmModel: 'llm_model',
+                textLlmBaseUrl: 'text_llm_base_url',
+                textLlmApiKey: 'text_llm_api_key',
+                textLlmModel: 'text_llm_model',
+                textLlmDisableThinking: 'text_llm_disable_thinking',
+                textLlmParallel: 'text_llm_parallel',
+                visionLlmBaseUrl: 'vision_llm_base_url',
+                visionLlmApiKey: 'vision_llm_api_key',
+                visionLlmModel: 'vision_llm_model',
+                visionLlmDisableThinking: 'vision_llm_disable_thinking',
+                visionLlmParallel: 'vision_llm_parallel',
                 llmSystemPrompt: 'llm_system_prompt',
-                llmDisableThinking: 'llm_disable_thinking',
-                llmParallel: 'llm_parallel',
                 visionMode: 'vision_mode',
-                visionParallel: 'vision_parallel',
                 visionAssistSendAll: 'vision_assist_send_all',
                 visionAssistConfidenceThreshold: 'vision_assist_confidence_threshold',
                 debugMode: 'debug_mode',
