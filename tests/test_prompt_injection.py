@@ -1,61 +1,8 @@
 # tests/test_prompt_injection.py
-# プロンプト合成と注入経路のテスト
+# プロンプト合成と注入経路のテスト — Gemini Vision専用構成
 
 import pytest
-from py_modules.providers.llm_translate import LlmTranslateProvider, TEXT_FIXED_PROMPT
 from py_modules.providers.gemini_vision import GeminiVisionProvider
-
-
-class TestTextPromptInjection:
-    """Text翻訳プロンプトの注入順テスト。
-    注入順: Text固定プロンプト → 共通Text プロンプト → ゲーム別Text プロンプト"""
-
-    def test_固定プロンプトのみ(self):
-        p = LlmTranslateProvider()
-        prompt = p._build_system_prompt("en", "ja")
-        assert "game text translator" in prompt
-        assert "Additional instructions" not in prompt
-
-    def test_共通プロンプト注入(self):
-        p = LlmTranslateProvider(system_prompt="略語を保持してください")
-        prompt = p._build_system_prompt("en", "ja")
-        assert "Additional instructions" in prompt
-        assert "略語を保持してください" in prompt
-
-    def test_ゲーム別プロンプト注入(self):
-        p = LlmTranslateProvider()
-        p.configure(game_prompt="このゲームはRPGです")
-        prompt = p._build_system_prompt("en", "ja")
-        assert "このゲームはRPGです" in prompt
-
-    def test_共通とゲーム別の両方(self):
-        p = LlmTranslateProvider(system_prompt="共通指示")
-        p.configure(game_prompt="ゲーム指示")
-        prompt = p._build_system_prompt("en", "ja")
-        # 両方が含まれる
-        assert "共通指示" in prompt
-        assert "ゲーム指示" in prompt
-        # 共通が先、ゲーム別が後
-        assert prompt.index("共通指示") < prompt.index("ゲーム指示")
-
-    def test_固定プロンプトにゲーム依存ルールがない(self):
-        """固定プロンプトに「UIは短く訳す」等のゲーム依存指示が残っていないこと"""
-        fixed = TEXT_FIXED_PROMPT
-        assert "UI label" not in fixed
-        assert "menu item" not in fixed
-        assert "HP, MP" not in fixed
-        assert "abbreviation" not in fixed.lower()
-
-    def test_言語名変換(self):
-        p = LlmTranslateProvider()
-        prompt = p._build_system_prompt("en", "ja")
-        assert "English" in prompt
-        assert "Japanese" in prompt
-
-    def test_auto言語(self):
-        p = LlmTranslateProvider()
-        prompt = p._build_system_prompt("auto", "ja")
-        assert "detected language" in prompt
 
 
 class TestVisionAssistPromptInjection:
@@ -100,10 +47,7 @@ class TestVisionAssistPromptInjection:
 
     def test_Assist固定プロンプトにゲーム依存ルールがない(self):
         """Assist固定プロンプトに「略語保持リスト」等が残っていないこと"""
-        import asyncio
         p = self._make_provider()
-        # assist_translate のsystem_promptを直接検証するため、
-        # 内部の _build_additional_prompt を確認
         additional = p._build_additional_prompt()
         assert "HP, MP" not in additional
 

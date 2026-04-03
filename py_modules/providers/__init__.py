@@ -1,17 +1,11 @@
 # providers/__init__.py
 # Provider factory and manager — Gemini Vision専用構成
 
-import asyncio
 import base64
-import io
 import logging
-import os
-import subprocess
 from typing import List, Optional
 
 from .base import (
-    ProviderType,
-    TextRegion,
     NetworkError,
     ApiKeyError,
     RateLimitError,
@@ -25,8 +19,6 @@ logger = logging.getLogger(__name__)
 # Export all public classes
 __all__ = [
     'VisionProvider',
-    'ProviderType',
-    'TextRegion',
     'NetworkError',
     'ApiKeyError',
     'RateLimitError',
