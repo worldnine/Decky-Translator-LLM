@@ -25,7 +25,6 @@ BIN_DIR = os.path.join(PLUGIN_DIR, "bin")
 DEPENDENCIES_ARCHIVE = os.path.join(BIN_DIR, "plugin-dependencies.tar.gz")
 EXTRACTION_MARKER = os.path.join(BIN_DIR, ".dependencies-extracted")
 BIN_PY_MODULES_DIR = os.path.join(BIN_DIR, "py_modules")
-BIN_RAPIDOCR_DIR = os.path.join(BIN_DIR, "rapidocr")
 
 def _should_extract_dependencies():
     """Check if dependencies archive needs to be extracted."""
@@ -43,7 +42,7 @@ def _should_extract_dependencies():
         return True  # Dependencies were updated, need to re-extract
 
     # Check if all expected directories exist (partial extraction detection)
-    if not all(os.path.exists(d) for d in [BIN_PY_MODULES_DIR, BIN_RAPIDOCR_DIR]):
+    if not os.path.exists(BIN_PY_MODULES_DIR):
         return True  # Some directories missing, need to re-extract
 
     return False  # Already extracted and up-to-date

@@ -1,57 +1,52 @@
 # Decky Translator LLM
 
-A fork of [Decky Translator](https://github.com/cat-in-a-box/Decky-Translator) with Gemini Vision-based translation.
+A fork of [Decky Translator](https://github.com/cat-in-a-box/Decky-Translator) — Gemini Vision で Steam Deck の画面を直接翻訳するプラグイン。
 
 ## Overview
 
-A [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) plugin that captures your Steam Deck screen and translates text directly using Gemini Vision API. Unlike traditional OCR + translation pipelines, the LLM sees the screenshot and performs text detection and translation in a single pass, providing context-aware translations of game text.
+[Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) plugin for Steam Deck. スクリーンショットを Gemini Vision API に送り、テキスト検出と翻訳を1パスで実行します。従来の OCR → テキスト翻訳パイプラインと異なり、画面コンテキストを理解した高品質な翻訳が得られます。
 
-Any OpenAI API-compatible endpoint can be used as the backend.
+バックエンドは OpenAI API 互換エンドポイントであれば何でも使えます。
 
-## What's different from the original?
+## Features
 
-| Feature | Original | This fork |
-| --- | --- | --- |
-| Google Translate / Cloud Translation | o | - (removed) |
-| OCR (RapidOCR, OCR.space, Google Vision) | o | - (removed) |
-| Gemini Vision (screenshot -> translation) | x | o |
-| Custom prompts (common / per-game) | x | o |
+- スクリーンショットからの直接翻訳（OCR不要）
+- カスタムプロンプト（共通 / ゲーム別）
+- OpenAI API 互換の任意のバックエンドに対応
 
-This fork is specialized for Gemini Vision direct translation. The original multi-provider OCR and translation pipeline has been removed in favor of a simpler, single-pass architecture.
+### 対応バックエンド
 
-### Supported backends (OpenAI API compatible)
+* Google Gemini（gemini-2.5-flash, gemini-2.5-flash-lite 等）
+* OpenAI API 互換サービス（Ollama, vLLM, LiteLLM 等）
 
-* Google Gemini (gemini-2.5-flash, gemini-2.5-flash-lite, etc.)
-* Any OpenAI API-compatible service (Ollama, vLLM, LiteLLM, etc.)
+## Installation
 
-## Decky Plugin Store
+Decky公式ストアには登録していません。手動インストールのみ。
 
-This plugin is NOT available on the Decky Plugin Store. Manual installation only.
+### Requirements
 
-## Requirements
-
-* Steam Deck (LCD or OLED)
+* Steam Deck（LCD / OLED）
 * [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader)
-* An API key for your LLM service
+* LLMサービスのAPIキー
 
 ## Settings
 
-| Setting | Description |
+| 設定項目 | 説明 |
 | --- | --- |
-| Gemini API Key | API key for the Gemini / OpenAI-compatible service |
-| Gemini Model | Model name (e.g. `gemini-2.5-flash-lite`) |
-| Base URL (Advanced) | API endpoint. Defaults to Google's Gemini API |
+| Gemini API Key | Gemini / OpenAI互換サービスのAPIキー |
+| Gemini Model | モデル名（例: `gemini-2.5-flash-lite`） |
+| Base URL（Advanced） | APIエンドポイント。未設定時はGoogle Gemini APIを使用 |
 
 ### Prompts
 
-You can customize translation behavior with prompt files:
+翻訳の挙動をプロンプトファイルでカスタマイズできます:
 
-* **Common prompt** — Applied to all games. Edit from the Prompts tab or via SSH at `~/homebrew/settings/decky-translator-prompts/vision-common.txt`
-* **Per-game prompt** — Applied only when a specific game is running. Edit from the Prompts tab or at `~/homebrew/settings/decky-translator-games/{app_id}/vision.txt`
+* **共通プロンプト** — 全ゲームに適用。Prompts タブまたは SSH で `~/homebrew/settings/decky-translator-prompts/vision-common.txt` を編集
+* **ゲーム別プロンプト** — 特定ゲーム起動中のみ適用。`~/homebrew/settings/decky-translator-games/{app_id}/vision.txt` を編集
 
 ## License
 
-GNU GPLv3 — same license as the original.
+GNU GPLv3 — オリジナルと同一ライセンス。
 
 ## Credits
 
