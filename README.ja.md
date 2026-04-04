@@ -31,14 +31,16 @@ Decky公式ストアには登録していません。手動インストールの
 * [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader)
 * LLMサービスのAPIキー
 
-### ZIP URLからインストール
+### URLからインストール
 
-1. [Releases](https://github.com/worldnine/Decky-Translator-LLM/releases) から最新の `Decky Translator.zip` のURLをコピー
-2. ゲームモードでDeckyメニューを開く（QAM / `...` ボタン）
-3. 設定（歯車アイコン）→ **General** → **Developer Mode** を有効化
-4. **Developer** タブ → **Install Plugin from ZIP** を選択
-5. ZIPのダウンロードURLを貼り付けてインストール
-6. Decky Loaderを再起動（設定 → General → **Restart Decky**）
+1. ゲームモードでDeckyメニューを開く（QAM / `...` ボタン）
+2. 設定（歯車アイコン）→ **General** → **Developer Mode** を有効化
+3. **Developer** タブ → **Install Plugin from URL** を選択
+4. 以下のURLを貼り付け:
+   ```
+   https://github.com/worldnine/Decky-Translator-LLM/releases/latest/download/Translator.LLM.zip
+   ```
+5. Decky Loaderを再起動（設定 → General → **Restart Decky**）
 
 ## 設定
 
