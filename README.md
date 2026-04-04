@@ -31,6 +31,15 @@ This plugin is NOT available on the Decky Plugin Store. Manual installation only
 * [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader)
 * An API key for your LLM service
 
+### Install from ZIP URL
+
+1. Copy the `Decky Translator.zip` URL from the latest [Release](https://github.com/worldnine/Decky-Translator-LLM/releases)
+2. In Gaming Mode, open the Decky menu (QAM / `...` button)
+3. Go to Settings (gear icon) → **General** → Enable **Developer Mode**
+4. Go to the **Developer** tab → **Install Plugin from ZIP**
+5. Paste the ZIP download URL and install
+6. Restart Decky Loader (Settings → General → **Restart Decky**)
+
 ## Settings
 
 | Setting | Description |
