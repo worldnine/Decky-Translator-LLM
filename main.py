@@ -1657,10 +1657,12 @@ class Plugin:
         return await self.set_setting("input_language", language)
 
     async def get_confidence_threshold(self):
-        return self._confidence_threshold
+        """deprecated: Gemini専用構成では未使用。"""
+        return 0.6
 
     async def set_confidence_threshold(self, threshold: float):
-        return await self.set_setting("confidence_threshold", threshold)
+        """deprecated: Gemini専用構成では未使用。"""
+        return True
 
     async def get_pause_game_on_overlay(self):
         return self._pause_game_on_overlay
