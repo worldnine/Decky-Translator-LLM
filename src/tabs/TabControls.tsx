@@ -1,4 +1,4 @@
-// src/tabs/TabControls.tsx - Input controls, behavior settings, and debug
+// src/tabs/TabControls.tsx - Settings tab (Gemini, controls, display, behavior, debug)
 
 import {
     PanelSection,
@@ -6,6 +6,7 @@ import {
     DropdownItem,
     ToggleField,
     SliderField,
+    TextField,
     Field
 } from "@decky/ui";
 
@@ -52,12 +53,48 @@ export const TabControls: VFC<TabControlsProps> = ({ inputDiagnostics }) => {
     const { settings, updateSetting } = useSettings();
 
     return (
-        <div style={{ marginLeft: "-8px", marginRight: "-8px" }}>
+        <div style={{ marginLeft: "-8px", marginRight: "-8px", paddingBottom: "40px" }}>
+            <PanelSection title="Gemini">
+                <PanelSectionRow>
+                    <Field label="Model" childrenContainerWidth="max">
+                        <TextField
+                            value={settings.geminiModel}
+                            onChange={(e) => updateSetting('geminiModel', e.target.value, 'Gemini Model')}
+                            bShowClearAction={true}
+                            description="e.g. gemini-2.5-flash or gemini-2.5-pro"
+                        />
+                    </Field>
+                </PanelSectionRow>
+
+                <PanelSectionRow>
+                    <Field label="API Key" childrenContainerWidth="max">
+                        <TextField
+                            value={settings.geminiApiKey}
+                            onChange={(e) => updateSetting('geminiApiKey', e.target.value, 'Gemini API Key')}
+                            bShowClearAction={true}
+                            bIsPassword={true}
+                            description="Required for the official Gemini API and most proxies"
+                        />
+                    </Field>
+                </PanelSectionRow>
+
+                <PanelSectionRow>
+                    <Field label="Base URL" childrenContainerWidth="max">
+                        <TextField
+                            value={settings.geminiBaseUrl}
+                            onChange={(e) => updateSetting('geminiBaseUrl', e.target.value, 'Gemini Base URL')}
+                            bShowClearAction={true}
+                            description="Leave empty to use the official endpoint"
+                        />
+                    </Field>
+                </PanelSectionRow>
+            </PanelSection>
+
             <PanelSection title="Control">
                 <PanelSectionRow>
                     <DropdownItem
                         label="Quick Translation Shortcut"
-                        description="Select which buttons to hold to start translaton"
+                        description="Select which buttons to hold to start translation"
                         rgOptions={inputModeOptions}
                         selectedOption={settings.inputMode}
                         onChange={(option) => updateSetting('inputMode', option.data, 'Input method')}
@@ -191,7 +228,7 @@ export const TabControls: VFC<TabControlsProps> = ({ inputDiagnostics }) => {
                 </PanelSectionRow>
             </PanelSection>
 
-            <PanelSection title="Miscellaneous">
+            <PanelSection title="Debug">
                 <PanelSectionRow>
                     <ToggleField
                         label="Debug Mode"

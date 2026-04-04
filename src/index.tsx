@@ -27,7 +27,7 @@ import { SettingsProvider, useSettings } from "./SettingsContext";
 import { logger } from "./Logger";
 
 // Import tab components
-import { TabMain, TabTranslation, TabPrompts, TabControls } from "./tabs";
+import { TabMain, TabTranslation, TabControls } from "./tabs";
 
 // SVG Icons for tabs
 const IconTranslate = () => (
@@ -39,12 +39,6 @@ const IconTranslate = () => (
 const IconLanguage = () => (
     <svg style={{ display: "block" }} width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm6.93 6h-2.95a15.65 15.65 0 00-1.38-3.56A8.03 8.03 0 0118.92 8zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14C4.1 13.36 4 12.69 4 12s.1-1.36.26-2h3.38c-.08.66-.14 1.32-.14 2s.06 1.34.14 2H4.26zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56A7.987 7.987 0 015.08 16zm2.95-8H5.08a7.987 7.987 0 014.33-3.56A15.65 15.65 0 008.03 8zM12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96zM14.34 14H9.66c-.09-.66-.16-1.32-.16-2s.07-1.35.16-2h4.68c.09.65.16 1.32.16 2s-.07 1.34-.16 2zm.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95a8.03 8.03 0 01-4.33 3.56zM16.36 14c.08-.66.14-1.32.14-2s-.06-1.34-.14-2h3.38c.16.64.26 1.31.26 2s-.1 1.36-.26 2h-3.38z" fill="currentColor"/>
-    </svg>
-);
-
-const IconGamePrompt = () => (
-    <svg style={{ display: "block" }} width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 10H3V8h18v8zM6 15h2v-2h2v-2H8V9H6v2H4v2h2v2zm9.5-2c.83 0 1.5-.67 1.5-1.5S16.33 10 15.5 10s-1.5.67-1.5 1.5.67 1.5 1.5 1.5zm4 0c.83 0 1.5-.67 1.5-1.5S20.33 10 19.5 10s-1.5.67-1.5 1.5.67 1.5 1.5 1.5z" fill="currentColor"/>
     </svg>
 );
 
@@ -144,12 +138,6 @@ const GameTranslator: VFC<{ logic: GameTranslatorLogic }> = ({ logic }) => {
                             title: <IconLanguage />,
                             content: <TabTranslation />,
                             id: "translation",
-                        },
-                        {
-                            // @ts-ignore
-                            title: <IconGamePrompt />,
-                            content: <TabPrompts />,
-                            id: "prompts",
                         },
                         {
                             // @ts-ignore

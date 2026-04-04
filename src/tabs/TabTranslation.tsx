@@ -1,50 +1,163 @@
-// src/tabs/TabTranslation.tsx - Language and Gemini settings
+// src/tabs/TabTranslation.tsx - Language settings and prompt editing
 
 import {
     PanelSection,
     PanelSectionRow,
     DropdownItem,
-    ToggleField,
-    TextField,
-    Field
+    Field,
+    Focusable,
+    Router
 } from "@decky/ui";
+import { call } from "@decky/api";
 
-import { VFC, useState } from "react";
+import { CSSProperties, VFC, useState, useEffect } from "react";
 import { useSettings } from "../SettingsContext";
 
 const languageOptions = [
-    { label: "🌐 Auto-detect", data: "auto" },
-    { label: "🇬🇧 English", data: "en" },
-    { label: "🇪🇸 Spanish", data: "es" },
-    { label: "🇫🇷 French", data: "fr" },
-    { label: "🇩🇪 German", data: "de" },
-    { label: "🇬🇷 Greek", data: "el" },
-    { label: "🇮🇹 Italian", data: "it" },
-    { label: "🇵🇹 Portuguese", data: "pt" },
-    { label: "🇷🇺 Russian", data: "ru" },
-    { label: "🇯🇵 Japanese", data: "ja" },
-    { label: "🇰🇷 Korean", data: "ko" },
-    { label: "🇨🇳 Chinese (Simplified)", data: "zh-CN" },
-    { label: "🇹🇼 Chinese (Traditional)", data: "zh-TW" },
-    { label: "🇸🇦 Arabic", data: "ar" },
-    { label: "🇫🇮 Finnish", data: "fi" },
-    { label: "🇳🇱 Dutch", data: "nl" },
-    { label: "🇮🇳 Hindi", data: "hi" },
-    { label: "🇵🇱 Polish", data: "pl" },
-    { label: "🇹🇭 Thai", data: "th" },
-    { label: "🇹🇷 Turkish", data: "tr" },
-    { label: "🇺🇦 Ukrainian", data: "uk" },
-    { label: "🇷🇴 Romanian", data: "ro" },
-    { label: "🇻🇳 Vietnamese", data: "vi" },
-    { label: "🇧🇬 Bulgarian", data: "bg" }
+    { label: "\u{1F310} Auto-detect", data: "auto" },
+    { label: "\u{1F1EC}\u{1F1E7} English", data: "en" },
+    { label: "\u{1F1EA}\u{1F1F8} Spanish", data: "es" },
+    { label: "\u{1F1EB}\u{1F1F7} French", data: "fr" },
+    { label: "\u{1F1E9}\u{1F1EA} German", data: "de" },
+    { label: "\u{1F1EC}\u{1F1F7} Greek", data: "el" },
+    { label: "\u{1F1EE}\u{1F1F9} Italian", data: "it" },
+    { label: "\u{1F1F5}\u{1F1F9} Portuguese", data: "pt" },
+    { label: "\u{1F1F7}\u{1F1FA} Russian", data: "ru" },
+    { label: "\u{1F1EF}\u{1F1F5} Japanese", data: "ja" },
+    { label: "\u{1F1F0}\u{1F1F7} Korean", data: "ko" },
+    { label: "\u{1F1E8}\u{1F1F3} Chinese (Simplified)", data: "zh-CN" },
+    { label: "\u{1F1F9}\u{1F1FC} Chinese (Traditional)", data: "zh-TW" },
+    { label: "\u{1F1F8}\u{1F1E6} Arabic", data: "ar" },
+    { label: "\u{1F1EB}\u{1F1EE} Finnish", data: "fi" },
+    { label: "\u{1F1F3}\u{1F1F1} Dutch", data: "nl" },
+    { label: "\u{1F1EE}\u{1F1F3} Hindi", data: "hi" },
+    { label: "\u{1F1F5}\u{1F1F1} Polish", data: "pl" },
+    { label: "\u{1F1F9}\u{1F1ED} Thai", data: "th" },
+    { label: "\u{1F1F9}\u{1F1F7} Turkish", data: "tr" },
+    { label: "\u{1F1FA}\u{1F1E6} Ukrainian", data: "uk" },
+    { label: "\u{1F1F7}\u{1F1F4} Romanian", data: "ro" },
+    { label: "\u{1F1FB}\u{1F1F3} Vietnamese", data: "vi" },
+    { label: "\u{1F1E7}\u{1F1EC} Bulgarian", data: "bg" }
 ];
 
 const selectLanguageOption = { label: "Select language...", data: "" };
 const outputLanguageOptions = languageOptions.filter(lang => lang.data !== "auto");
 
+interface PromptFileResponse {
+    content?: string;
+    file_path?: string;
+    error?: string;
+}
+
+const textareaStyle: CSSProperties = {
+    width: "100%",
+    backgroundColor: "#3d4450",
+    color: "#dcdedf",
+    border: "1px solid #4c5564",
+    borderRadius: "4px",
+    padding: "8px",
+    fontSize: "13px",
+    lineHeight: "1.5",
+    resize: "vertical" as const,
+    fontFamily: "inherit",
+};
+
+const PromptEditor: VFC<{
+    label: string;
+    value: string;
+    filePath?: string;
+    placeholder?: string;
+    onChange: (value: string) => void;
+    onBlur: () => void;
+}> = ({ label, value, filePath, placeholder, onChange, onBlur }) => (
+    <PanelSectionRow>
+        <Field label={label} childrenContainerWidth="max">
+            <Focusable onBlur={onBlur}>
+                <textarea
+                    value={value}
+                    onChange={(e) => onChange(e.target.value)}
+                    rows={6}
+                    style={textareaStyle}
+                    placeholder={placeholder}
+                />
+            </Focusable>
+            {filePath && (
+                <div style={{ color: "#8b929a", fontSize: "11px", marginTop: "4px", wordBreak: "break-all" }}>
+                    {filePath}
+                </div>
+            )}
+        </Field>
+    </PanelSectionRow>
+);
+
 export const TabTranslation: VFC = () => {
     const { settings, updateSetting } = useSettings();
-    const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
+
+    // Common prompt state
+    const [commonContent, setCommonContent] = useState("");
+    const [commonPath, setCommonPath] = useState("");
+    const [commonSaved, setCommonSaved] = useState("");
+
+    // Game-specific prompt state
+    const [gameInfo, setGameInfo] = useState<{
+        appId: number;
+        displayName: string;
+    } | null>(null);
+    const [gameContent, setGameContent] = useState("");
+    const [gamePath, setGamePath] = useState("");
+    const [gameSaved, setGameSaved] = useState("");
+
+    useEffect(() => {
+        call<[], PromptFileResponse | null>('get_common_vision_prompt').then(result => {
+            if (!result) return;
+            setCommonContent(result.content || "");
+            setCommonPath(result.file_path || "");
+            setCommonSaved(result.content || "");
+        });
+    }, [settings.geminiModel, settings.geminiBaseUrl]);
+
+    useEffect(() => {
+        const mainApp = Router.MainRunningApp;
+        if (!mainApp?.appid) {
+            setGameInfo(null);
+            return;
+        }
+
+        const appId = Number(mainApp.appid);
+        const displayName = mainApp.display_name || "";
+        setGameInfo({ appId, displayName });
+
+        call<[number, string], PromptFileResponse | null>('ensure_game_vision_prompt_file', appId, displayName).then(result => {
+            if (!result || result.error) return;
+            setGameContent(result.content || "");
+            setGamePath(result.file_path || "");
+            setGameSaved(result.content || "");
+        });
+    }, [settings.geminiModel, settings.geminiBaseUrl]);
+
+    const saveCommon = async () => {
+        if (commonContent !== commonSaved) {
+            const saving = commonContent;
+            try {
+                const ok = await call<[string], boolean>('save_common_vision_prompt', saving);
+                if (ok) {
+                    setCommonSaved(saving);
+                }
+            } catch {}
+        }
+    };
+
+    const saveGame = async () => {
+        if (gameInfo && gameContent !== gameSaved) {
+            const saving = gameContent;
+            try {
+                const ok = await call<[number, string], boolean>('save_game_vision_prompt', gameInfo.appId, saving);
+                if (ok) {
+                    setGameSaved(saving);
+                }
+            } catch {}
+        }
+    };
 
     return (
         <div style={{ marginLeft: "-8px", marginRight: "-8px", paddingBottom: "40px" }}>
@@ -62,7 +175,7 @@ export const TabTranslation: VFC = () => {
                 <PanelSectionRow>
                     <DropdownItem
                         label="Output Language"
-                        description="Target language for Gemini translation"
+                        description="Target language for translation"
                         rgOptions={[...(settings.targetLanguage === '' ? [selectLanguageOption] : []), ...outputLanguageOptions]}
                         selectedOption={settings.targetLanguage}
                         onChange={(option) => updateSetting('targetLanguage', option.data, 'Output language')}
@@ -70,65 +183,53 @@ export const TabTranslation: VFC = () => {
                 </PanelSectionRow>
             </PanelSection>
 
-            <PanelSection title="Gemini">
+            <PanelSection title="Common Instructions">
                 <PanelSectionRow>
                     <Field focusable={true} childrenContainerWidth="max">
                         <div style={{ color: "#8b929a", fontSize: "12px", lineHeight: "1.6" }}>
-                            <div style={{ marginBottom: "6px", color: "#dcdedf", fontWeight: "bold" }}>
-                                Gemini Vision is the only translation pipeline in this fork.
-                            </div>
-                            <div>- Screenshot is sent directly to Gemini for text detection and translation</div>
-                            <div>- OCR and text-translation provider selection have been removed</div>
-                            <div>- Leave Base URL empty to use the official Gemini endpoint</div>
+                            Instructions applied to all games.
                         </div>
                     </Field>
                 </PanelSectionRow>
+                <PromptEditor
+                    label="Gemini Instructions"
+                    value={commonContent}
+                    filePath={commonPath}
+                    placeholder="Ignore HUD numbers. Focus on dialog. Keep terminology consistent..."
+                    onChange={setCommonContent}
+                    onBlur={saveCommon}
+                />
+            </PanelSection>
 
-                <PanelSectionRow>
-                    <Field label="Gemini API Key" childrenContainerWidth="max">
-                        <TextField
-                            value={settings.geminiApiKey}
-                            onChange={(e) => updateSetting('geminiApiKey', e.target.value, 'Gemini API Key')}
-                            bShowClearAction={true}
-                            bIsPassword={true}
-                            description="Required for the official Gemini API and most proxies"
-                        />
-                    </Field>
-                </PanelSectionRow>
-
-                <PanelSectionRow>
-                    <Field label="Gemini Model" childrenContainerWidth="max">
-                        <TextField
-                            value={settings.geminiModel}
-                            onChange={(e) => updateSetting('geminiModel', e.target.value, 'Gemini Model')}
-                            bShowClearAction={true}
-                            description="e.g. gemini-2.5-flash or gemini-2.5-pro"
-                        />
-                    </Field>
-                </PanelSectionRow>
-
-                <PanelSectionRow>
-                    <ToggleField
-                        label="Show Advanced Settings"
-                        description="Display custom endpoint settings for proxies or gateways"
-                        checked={showAdvanced}
-                        onChange={(value) => setShowAdvanced(value)}
-                    />
-                </PanelSectionRow>
-
-                {showAdvanced && (
+            {gameInfo ? (
+                <PanelSection title={`Game: ${gameInfo.displayName}`}>
                     <PanelSectionRow>
-                        <Field label="Gemini Base URL" childrenContainerWidth="max">
-                            <TextField
-                                value={settings.geminiBaseUrl}
-                                onChange={(e) => updateSetting('geminiBaseUrl', e.target.value, 'Gemini Base URL')}
-                                bShowClearAction={true}
-                                description="Optional. Leave empty to use the official Gemini endpoint."
-                            />
+                        <Field focusable={true} childrenContainerWidth="max">
+                            <div style={{ color: "#8b929a", fontSize: "12px", lineHeight: "1.6" }}>
+                                App ID: {gameInfo.appId}
+                            </div>
                         </Field>
                     </PanelSectionRow>
-                )}
-            </PanelSection>
+                    <PromptEditor
+                        label="Game Instructions"
+                        value={gameContent}
+                        filePath={gamePath}
+                        placeholder="Glossary, tone, and special rules for this game..."
+                        onChange={setGameContent}
+                        onBlur={saveGame}
+                    />
+                </PanelSection>
+            ) : (
+                <PanelSection title="Game-Specific Instructions">
+                    <PanelSectionRow>
+                        <Field focusable={true} childrenContainerWidth="max">
+                            <div style={{ color: "#8b929a", fontSize: "12px", lineHeight: "1.6" }}>
+                                Launch a game to edit game-specific instructions.
+                            </div>
+                        </Field>
+                    </PanelSectionRow>
+                </PanelSection>
+            )}
         </div>
     );
 };

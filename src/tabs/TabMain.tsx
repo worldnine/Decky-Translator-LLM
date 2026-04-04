@@ -1,24 +1,46 @@
-// src/tabs/TabMain.tsx - Main tab with enable toggle and translate button
+// src/tabs/TabMain.tsx - Main tab with enable toggle, translate button, and status summary
 
 import {
     ButtonItem,
     PanelSection,
     PanelSectionRow,
     ToggleField,
-    Router,
-    Navigation,
-    DialogButton,
-    Focusable
+    Router
 } from "@decky/ui";
 
 import { VFC } from "react";
 import { BsTranslate, BsXLg } from "react-icons/bs";
-import { SiKofi } from "react-icons/si";
-import { HiQrCode } from "react-icons/hi2";
-import showQrModal from "../showQrModal";
 import { useSettings } from "../SettingsContext";
 import { GameTranslatorLogic } from "../Translator";
 import { logger } from "../Logger";
+
+// Language code to display name
+const languageNames: Record<string, string> = {
+    "auto": "Auto-detect",
+    "en": "English",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "el": "Greek",
+    "it": "Italian",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "zh-CN": "Chinese (Simplified)",
+    "zh-TW": "Chinese (Traditional)",
+    "ar": "Arabic",
+    "fi": "Finnish",
+    "nl": "Dutch",
+    "hi": "Hindi",
+    "pl": "Polish",
+    "th": "Thai",
+    "tr": "Turkish",
+    "uk": "Ukrainian",
+    "ro": "Romanian",
+    "vi": "Vietnamese",
+    "bg": "Bulgarian",
+};
 
 interface TabMainProps {
     logic: GameTranslatorLogic;
@@ -39,6 +61,13 @@ export const TabMain: VFC<TabMainProps> = ({ logic, overlayVisible }) => {
             }, 200);
         }
     };
+
+    const inputLang = settings.inputLanguage
+        ? (languageNames[settings.inputLanguage] || settings.inputLanguage)
+        : "Not set";
+    const outputLang = settings.targetLanguage
+        ? (languageNames[settings.targetLanguage] || settings.targetLanguage)
+        : "Not set";
 
     return (
         <div style={{ marginLeft: "-8px", marginRight: "-8px" }}>
@@ -68,61 +97,41 @@ export const TabMain: VFC<TabMainProps> = ({ logic, overlayVisible }) => {
 
                         <PanelSectionRow>
                             <div style={{ fontSize: '12px', marginTop: '8px' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', marginBottom: '2px' }}>
-                                    <BsTranslate style={{ marginRight: '8px', color: '#aaa' }} />
-                                    <span style={{ color: '#888' }}>Pipeline:</span>
-                                    <span style={{ marginLeft: '6px', fontWeight: 'bold' }}>Gemini Vision</span>
+                                {/* Model name - most prominent */}
+                                <div style={{ marginBottom: '6px' }}>
+                                    <span style={{ color: '#888', fontSize: '10px' }}>Model</span>
+                                    <div style={{
+                                        fontSize: '15px',
+                                        fontWeight: 'bold',
+                                        color: settings.geminiModel ? '#dcdedf' : '#ff6b6b',
+                                        marginTop: '2px'
+                                    }}>
+                                        {settings.geminiModel || 'Model not set'}
+                                    </div>
                                 </div>
-                                <div style={{ marginLeft: '22px', marginBottom: '6px' }}>
-                                    <div style={{ color: settings.geminiApiKey ? '#666' : '#ff6b6b', fontSize: '10px' }}>
-                                        {settings.geminiApiKey ? 'API key configured' : 'API key required'}
-                                    </div>
-                                    <div style={{ color: settings.geminiModel ? '#666' : '#ff6b6b', fontSize: '10px' }}>
-                                        {settings.geminiModel ? `Model: ${settings.geminiModel}` : 'Model required'}
-                                    </div>
-                                    <div style={{ color: '#666', fontSize: '10px' }}>
-                                        {settings.geminiBaseUrl
-                                            ? `Custom endpoint: ${settings.geminiBaseUrl}`
-                                            : 'Official Gemini endpoint'}
-                                    </div>
+
+                                {/* Endpoint */}
+                                <div style={{ color: '#666', fontSize: '10px', marginBottom: '3px' }}>
+                                    Endpoint: {settings.geminiBaseUrl ? 'Custom' : 'Official'}
+                                </div>
+
+                                {/* Languages */}
+                                <div style={{ color: '#666', fontSize: '10px', marginBottom: '3px' }}>
+                                    {inputLang} → {outputLang}
+                                </div>
+
+                                {/* API key status */}
+                                <div style={{
+                                    color: settings.geminiApiKey ? '#666' : '#ff6b6b',
+                                    fontSize: '10px'
+                                }}>
+                                    {settings.geminiApiKey ? 'API key configured' : 'API key not set'}
                                 </div>
                             </div>
                         </PanelSectionRow>
                     </>
                 )}
 
-                <PanelSectionRow>
-                    <div
-                        style={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            marginTop: '12px',
-                        }}
-                    >
-                        <Focusable>
-                            <DialogButton
-                                onClick={() => {
-                                    Navigation.CloseSideMenus();
-                                    Navigation.NavigateToExternalWeb('https://ko-fi.com/alexanderdev');
-                                }}
-                                onSecondaryButton={() => showQrModal('https://ko-fi.com/alexanderdev')}
-                                onSecondaryActionDescription="Show QR Code"
-                                style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '8px',
-                                    padding: '6px 12px',
-                                    fontSize: '11px',
-                                    minWidth: 'auto',
-                                }}
-                            >
-                                <SiKofi style={{ fontSize: '13px' }} />
-                                <span>Support on Ko-fi</span>
-                                <HiQrCode style={{ fontSize: '13px', opacity: 0.6 }} />
-                            </DialogButton>
-                        </Focusable>
-                    </div>
-                </PanelSectionRow>
             </PanelSection>
         </div>
     );
