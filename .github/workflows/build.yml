@@ -115,6 +115,14 @@ jobs:
           name: decky-translator-plugin
           path: ./
 
+      - name: Get ZIP download URL
+        id: zip_url
+        run: |
+          REPO="${{ github.repository }}"
+          TAG="${{ needs.build.outputs.version }}"
+          # スペースを . に置換したファイル名（GitHub Releases の仕様）
+          echo "url=https://github.com/${REPO}/releases/download/${TAG}/Translator.LLM.zip" >> $GITHUB_OUTPUT
+
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
@@ -123,3 +131,15 @@ jobs:
           files: "Translator LLM.zip"
           draft: false
           generate_release_notes: true
+          body: |
+            ## インストール
+
+            1. Deckyメニュー → 設定 → **Developer Mode** を有効化
+            2. **Developer** タブ → **Install Plugin from ZIP**
+            3. 以下のURLを貼り付け:
+
+            ```
+            ${{ steps.zip_url.outputs.url }}
+            ```
+
+            4. Decky Loaderを再起動
