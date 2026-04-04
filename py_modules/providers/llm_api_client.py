@@ -197,6 +197,14 @@ class LlmApiClient:
                 raise NetworkError(f"Gemini API returned status {response.status_code}")
 
             result = response.json()
+            # トークン使用量をログ出力（キャッシュ確認用）
+            usage = result.get("usageMetadata")
+            if usage:
+                logger.info(
+                    f"Gemini tokens: prompt={usage.get('promptTokenCount', '?')}, "
+                    f"completion={usage.get('candidatesTokenCount', '?')}, "
+                    f"cached={usage.get('cachedContentTokenCount', 'N/A')}"
+                )
             candidate = result["candidates"][0]
             finish_reason = candidate.get("finishReason", "unknown")
             content = candidate["content"]["parts"][0]["text"]
@@ -278,6 +286,18 @@ class LlmApiClient:
                 raise NetworkError(f"LLM API returned status {response.status_code}")
 
             result = response.json()
+            # トークン使用量をログ出力（キャッシュ確認用）
+            usage = result.get("usage")
+            if usage:
+                cached = usage.get(
+                    "cached_tokens",
+                    (usage.get("prompt_tokens_details") or {}).get("cached_tokens", "N/A"),
+                )
+                logger.info(
+                    f"LLM tokens: prompt={usage.get('prompt_tokens', '?')}, "
+                    f"completion={usage.get('completion_tokens', '?')}, "
+                    f"cached={cached}"
+                )
             choice = result["choices"][0]
             finish_reason = choice.get("finish_reason", "unknown")
             content = choice["message"]["content"]
