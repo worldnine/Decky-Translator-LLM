@@ -93,7 +93,7 @@ from migration import (
 _processing_lock = False
 
 # Get environment variable
-settingsDir = os.environ.get("DECKY_PLUGIN_SETTINGS_DIR", "/home/deck/homebrew/settings")
+settingsDir = os.environ.get("DECKY_PLUGIN_SETTINGS_DIR", "/home/deck/homebrew/settings/decky-translator-llm")
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 # Set up logging
