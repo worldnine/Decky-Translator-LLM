@@ -404,7 +404,13 @@ export const TabControls: VFC<TabControlsProps> = ({ inputDiagnostics }) => {
                             label="Enable Pin Shortcut"
                             description="Use a dedicated button shortcut to pin the current screen"
                             checked={settings.pinShortcutEnabled ?? false}
-                            onChange={(value) => updateSetting('pinShortcutEnabled', value, 'Pin Shortcut')}
+                            onChange={(value) => {
+                                updateSetting('pinShortcutEnabled', value, 'Pin Shortcut');
+                                // pinInputMode が未設定なら既定値を保存
+                                if (value && settings.pinInputMode == null) {
+                                    updateSetting('pinInputMode', InputMode.L4_BUTTON, 'Pin input mode');
+                                }
+                            }}
                         />
                     </PanelSectionRow>
 

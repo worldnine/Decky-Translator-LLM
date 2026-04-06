@@ -133,6 +133,7 @@ export class Input {
     private quickToggleEnabled: boolean = false;
 
     // ピン用ショートカット設定
+    private pinFeatureEnabled: boolean = false;
     private pinShortcutEnabled: boolean = false;
     private pinInputMode: InputMode | null = null;
     private pinHoldTime: number = 1000;
@@ -422,6 +423,11 @@ export class Input {
         return this.quickToggleEnabled;
     }
 
+    setPinFeatureEnabled(enabled: boolean): void {
+        logger.info('Input', `Setting pin feature enabled to: ${enabled}`);
+        this.pinFeatureEnabled = enabled;
+    }
+
     setPinShortcutEnabled(enabled: boolean): void {
         logger.info('Input', `Setting pin shortcut enabled to: ${enabled}`);
         this.pinShortcutEnabled = enabled;
@@ -430,7 +436,6 @@ export class Input {
     setPinInputMode(mode: InputMode | null): void {
         logger.info('Input', `Setting pin input mode to: ${mode !== null ? InputMode[mode] : 'null'}`);
         this.pinInputMode = mode;
-        this.pinTouchStartTime = null;
         this.pinButtonWasPressed = false;
         this.pinWaitingForRelease = false;
     }
@@ -640,7 +645,7 @@ export class Input {
         this.handleButtonCombination(buttonPressed);
 
         // --- ピン用ショートカット（翻訳とは独立して判定） ---
-        if (this.pinShortcutEnabled && this.pinInputMode !== null && this.pinInputMode !== this.inputMode) {
+        if (this.pinFeatureEnabled && this.pinShortcutEnabled && this.pinInputMode !== null && this.pinInputMode !== this.inputMode) {
             let pinPressed = false;
             switch (this.pinInputMode) {
                 case InputMode.L4_BUTTON: pinPressed = buttons.includes(Button.L4); break;

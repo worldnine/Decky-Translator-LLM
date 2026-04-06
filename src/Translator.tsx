@@ -556,6 +556,12 @@ export class GameTranslatorLogic {
         this.imageState.setAllowLabelGrowth(allow);
     }
 
+    setPinFeatureEnabled = (enabled: boolean): void => {
+        if (this.shortcutInput) {
+            this.shortcutInput.setPinFeatureEnabled(enabled);
+        }
+    }
+
     setPinShortcutEnabled = (enabled: boolean): void => {
         if (this.shortcutInput) {
             this.shortcutInput.setPinShortcutEnabled(enabled);
