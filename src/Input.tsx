@@ -50,7 +50,8 @@ export enum InputMode {
 export enum ActionType {
     TRANSLATE = 0,
     DISMISS = 1,
-    TOGGLE_TRANSLATIONS = 2
+    TOGGLE_TRANSLATIONS = 2,
+    PIN = 3
 }
 
 export interface ProgressInfo {
@@ -130,6 +131,14 @@ export class Input {
 
     // Quick toggle setting - allows right button to toggle overlay in combo modes
     private quickToggleEnabled: boolean = false;
+
+    // ピン用ショートカット設定
+    private pinShortcutEnabled: boolean = false;
+    private pinInputMode: InputMode | null = null;
+    private pinHoldTime: number = 1000;
+    private pinButtonWasPressed: boolean = false;
+    private pinWaitingForRelease: boolean = false;
+    private pinTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
     // Track currently pressed buttons (using Button enum values now)
     private currentlyPressedButtons: Set<Button> = new Set();
@@ -309,6 +318,9 @@ export class Input {
             this.leftTouchpadTouched = false;
             this.rightTouchpadTouched = false;
             this.currentlyPressedButtons.clear();
+            this.pinButtonWasPressed = false;
+            this.pinWaitingForRelease = false;
+            if (this.pinTimeoutId) { clearTimeout(this.pinTimeoutId); this.pinTimeoutId = null; }
         }
     }
 
@@ -357,6 +369,7 @@ export class Input {
         if (this.timeoutId) clearTimeout(this.timeoutId);
         if (this.animationFrameId) cancelAnimationFrame(this.animationFrameId);
         if (this.clearCooldownTimeoutId) clearTimeout(this.clearCooldownTimeoutId);
+        if (this.pinTimeoutId) clearTimeout(this.pinTimeoutId);
     }
 
     setInputMode(mode: InputMode): void {
@@ -407,6 +420,24 @@ export class Input {
 
     getQuickToggleEnabled(): boolean {
         return this.quickToggleEnabled;
+    }
+
+    setPinShortcutEnabled(enabled: boolean): void {
+        logger.info('Input', `Setting pin shortcut enabled to: ${enabled}`);
+        this.pinShortcutEnabled = enabled;
+    }
+
+    setPinInputMode(mode: InputMode | null): void {
+        logger.info('Input', `Setting pin input mode to: ${mode !== null ? InputMode[mode] : 'null'}`);
+        this.pinInputMode = mode;
+        this.pinTouchStartTime = null;
+        this.pinButtonWasPressed = false;
+        this.pinWaitingForRelease = false;
+    }
+
+    setPinHoldTime(ms: number): void {
+        logger.info('Input', `Setting pin hold time to: ${ms} ms`);
+        this.pinHoldTime = ms;
     }
 
     checkHealth(): boolean {
@@ -607,6 +638,24 @@ export class Input {
 
         // Handle button press
         this.handleButtonCombination(buttonPressed);
+
+        // --- ピン用ショートカット（翻訳とは独立して判定） ---
+        if (this.pinShortcutEnabled && this.pinInputMode !== null && this.pinInputMode !== this.inputMode) {
+            let pinPressed = false;
+            switch (this.pinInputMode) {
+                case InputMode.L4_BUTTON: pinPressed = buttons.includes(Button.L4); break;
+                case InputMode.R4_BUTTON: pinPressed = buttons.includes(Button.R4); break;
+                case InputMode.L5_BUTTON: pinPressed = buttons.includes(Button.L5); break;
+                case InputMode.R5_BUTTON: pinPressed = buttons.includes(Button.R5); break;
+                case InputMode.L3_BUTTON: pinPressed = buttons.includes(Button.L3); break;
+                case InputMode.R3_BUTTON: pinPressed = buttons.includes(Button.R3); break;
+                case InputMode.L4_R4_COMBO: pinPressed = buttons.includes(Button.L4) && buttons.includes(Button.R4); break;
+                case InputMode.L5_R5_COMBO: pinPressed = buttons.includes(Button.L5) && buttons.includes(Button.R5); break;
+                case InputMode.L3_R3_COMBO: pinPressed = buttons.includes(Button.L3) && buttons.includes(Button.R3); break;
+                case InputMode.TOUCHPAD_COMBO: pinPressed = buttons.includes(Button.LEFT_TOUCHPAD_CLICK) && buttons.includes(Button.RIGHT_TOUCHPAD_CLICK); break;
+            }
+            this.handlePinButton(pinPressed);
+        }
     }
 
     // Handle button press (works for all input modes)
@@ -654,6 +703,38 @@ export class Input {
         // Update state (reusing touchpad vars for button state)
         this.leftTouchpadTouched = buttonPressed;
         this.rightTouchpadTouched = buttonPressed;
+    }
+
+    // ピンボタンのホールド判定（翻訳と同じ setTimeout 方式）
+    private handlePinButton(pinPressed: boolean): void {
+        if (this.pinWaitingForRelease) {
+            if (!pinPressed) {
+                this.pinWaitingForRelease = false;
+            }
+            return;
+        }
+
+        if (pinPressed && !this.pinButtonWasPressed) {
+            // ボタン押下開始 — タイマーセット
+            this.pinButtonWasPressed = true;
+            if (this.pinTimeoutId) clearTimeout(this.pinTimeoutId);
+            this.pinTimeoutId = setTimeout(() => {
+                if (this.pinButtonWasPressed) {
+                    logger.info('Input', 'Pin shortcut triggered');
+                    this.onButtonsPressedListeners.forEach(cb => cb(ActionType.PIN));
+                    this.pinButtonWasPressed = false;
+                    this.pinWaitingForRelease = true;
+                }
+                this.pinTimeoutId = null;
+            }, this.pinHoldTime);
+        } else if (!pinPressed && this.pinButtonWasPressed) {
+            // リリース — ホールド不足、タイマーキャンセル
+            this.pinButtonWasPressed = false;
+            if (this.pinTimeoutId) {
+                clearTimeout(this.pinTimeoutId);
+                this.pinTimeoutId = null;
+            }
+        }
     }
 
     onShortcutPressed(callback: (actionType: ActionType) => void): void {

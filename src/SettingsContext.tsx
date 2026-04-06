@@ -178,6 +178,9 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
             logic.setGroupingPower(serverSettings.grouping_power ?? 0.25);
             logic.setHideIdenticalTranslations(serverSettings.hide_identical_translations ?? false);
             logic.setAllowLabelGrowth(serverSettings.allow_label_growth ?? false);
+            logic.setPinShortcutEnabled(serverSettings.pin_shortcut_enabled ?? false);
+            logic.setPinInputMode(serverSettings.pin_input_mode ?? null);
+            logic.setPinHoldTime(serverSettings.hold_time_pin ?? 1000);
             logger.setEnabled(serverSettings.debug_mode || false);
 
             logger.info('SettingsContext', 'All settings loaded successfully');
@@ -273,6 +276,15 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                     break;
                 case 'allowLabelGrowth':
                     logic.setAllowLabelGrowth(value);
+                    break;
+                case 'pinShortcutEnabled':
+                    logic.setPinShortcutEnabled(value);
+                    break;
+                case 'pinInputMode':
+                    logic.setPinInputMode(value);
+                    break;
+                case 'holdTimePin':
+                    logic.setPinHoldTime(value);
                     break;
             }
 

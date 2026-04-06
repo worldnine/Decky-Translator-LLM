@@ -50,7 +50,10 @@ export class GameTranslatorLogic {
             // Only process inputs if the plugin is enabled
             if (!this.enabled) return;
 
-            if (actionType === ActionType.DISMISS) {
+            if (actionType === ActionType.PIN) {
+                // ピンアクション — ショートカット経由
+                this.pinCurrentScreen("shortcut").catch(err => logger.error('Translator', 'Pin shortcut failed', err));
+            } else if (actionType === ActionType.DISMISS) {
                 // Dismiss overlay action
                 if (this.imageState.isVisible()) {
                     this.imageState.hideImage();
@@ -304,6 +307,29 @@ export class GameTranslatorLogic {
         });
     }
 
+    pinCurrentScreen = async (trigger: string = "button"): Promise<void> => {
+        try {
+            const mainApp = Router.MainRunningApp;
+            const appId = mainApp?.appid ? Number(mainApp.appid) : 0;
+            const appName = mainApp?.display_name || "";
+
+            const result = await call<[number, string, string | null, string], any>(
+                'pin_capture', appId, appName, null, trigger
+            );
+
+            if (result?.ok) {
+                this.notify("Pinned current screen", 1500);
+                logger.info('Translator', `Pin saved: ${result.pin_id}`);
+            } else {
+                this.notify("Pin failed", 2000, result?.error || "Unknown error");
+                logger.error('Translator', `Pin failed: ${result?.error}`);
+            }
+        } catch (err) {
+            this.notify("Pin failed", 2000);
+            logger.error('Translator', 'Pin failed', err);
+        }
+    }
+
     takeScreenshotAndTranslate = async (): Promise<void> => {
         // If already processing or disabled, return
         if (this.isProcessing || !this.enabled) {
@@ -528,6 +554,24 @@ export class GameTranslatorLogic {
 
     setAllowLabelGrowth = (allow: boolean): void => {
         this.imageState.setAllowLabelGrowth(allow);
+    }
+
+    setPinShortcutEnabled = (enabled: boolean): void => {
+        if (this.shortcutInput) {
+            this.shortcutInput.setPinShortcutEnabled(enabled);
+        }
+    }
+
+    setPinInputMode = (mode: InputMode | null): void => {
+        if (this.shortcutInput) {
+            this.shortcutInput.setPinInputMode(mode);
+        }
+    }
+
+    setPinHoldTime = (ms: number): void => {
+        if (this.shortcutInput) {
+            this.shortcutInput.setPinHoldTime(ms);
+        }
     }
 
     setGeminiBaseUrl = (baseUrl: string): void => {
