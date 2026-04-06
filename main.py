@@ -1732,10 +1732,12 @@ class Plugin:
                 image_bytes = base64.b64decode(img_str)
             else:
                 # バックエンドでスクリーンショット取得
-                screenshot_b64 = await self.take_screenshot(game_name or "pin")
-                if not screenshot_b64 or isinstance(screenshot_b64, dict):
+                screenshot_result = await self.take_screenshot(game_name or "pin")
+                if not screenshot_result or not isinstance(screenshot_result, dict):
                     return {"ok": False, "error": "スクリーンショット取得失敗"}
-                img_str = screenshot_b64
+                img_str = screenshot_result.get("base64", "")
+                if not img_str:
+                    return {"ok": False, "error": "スクリーンショットのbase64が空"}
                 if img_str.startswith('data:image'):
                     img_str = img_str.split(',', 1)[1]
                 image_bytes = base64.b64decode(img_str)

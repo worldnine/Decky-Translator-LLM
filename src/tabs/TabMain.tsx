@@ -8,8 +8,9 @@ import {
     Router
 } from "@decky/ui";
 
-import { VFC } from "react";
-import { BsTranslate, BsXLg } from "react-icons/bs";
+import { VFC, useState } from "react";
+import { BsTranslate, BsXLg, BsPin } from "react-icons/bs";
+import { call } from "@decky/api";
 import { useSettings } from "../SettingsContext";
 import { GameTranslatorLogic } from "../Translator";
 import { logger } from "../Logger";
@@ -49,6 +50,44 @@ interface TabMainProps {
 
 export const TabMain: VFC<TabMainProps> = ({ logic, overlayVisible }) => {
     const { settings, updateSetting } = useSettings();
+    const [pinning, setPinning] = useState(false);
+
+    const handlePinClick = () => {
+        if (pinning) return;
+        setPinning(true);
+
+        const mainApp = Router.MainRunningApp;
+        const appId = mainApp?.appid ? Number(mainApp.appid) : 0;
+        const appName = mainApp?.display_name || "";
+
+        Router.CloseSideMenus();
+
+        // サイドメニューが閉じてからRPCを呼ぶ（translateボタンと同じパターン）
+        setTimeout(async () => {
+            try {
+                const result = await call<[number, string, string | null, string], any>(
+                    'pin_capture',
+                    appId,
+                    appName,
+                    null,
+                    "button"
+                );
+
+                if (result?.ok) {
+                    logic.notify("Pinned current screen", 1500);
+                    logger.info('TabMain', `Pin saved: ${result.pin_id}`);
+                } else {
+                    logic.notify("Pin failed", 2000, result?.error || "Unknown error");
+                    logger.error('TabMain', `Pin failed: ${result?.error}`);
+                }
+            } catch (err: any) {
+                logic.notify("Pin failed", 2000, String(err));
+                logger.error('TabMain', 'Pin failed', err);
+            } finally {
+                setPinning(false);
+            }
+        }, 200);
+    };
 
     const handleButtonClick = () => {
         if (overlayVisible) {
@@ -94,6 +133,18 @@ export const TabMain: VFC<TabMainProps> = ({ logic, overlayVisible }) => {
                                 }
                             </ButtonItem>
                         </PanelSectionRow>
+
+                        {settings.advancedFeaturesEnabled && settings.pinFeatureEnabled && (
+                            <PanelSectionRow>
+                                <ButtonItem
+                                    bottomSeparator="standard"
+                                    layout="below"
+                                    disabled={pinning}
+                                    onClick={handlePinClick}>
+                                    <span><BsPin style={{marginRight: "8px"}} /> {pinning ? "Pinning..." : "Pin Current Screen"}</span>
+                                </ButtonItem>
+                            </PanelSectionRow>
+                        )}
 
                         <PanelSectionRow>
                             <div style={{ fontSize: '12px', marginTop: '8px' }}>
