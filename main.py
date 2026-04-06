@@ -1890,6 +1890,40 @@ class Plugin:
             logger.error(f"get_pin_history_status エラー: {e}")
             return {"app_id": str(app_id), "count": 0, "total_size_bytes": 0}
 
+    async def search_pin_history(self, app_id: int, keyword: str, limit: int = 50):
+        """キーワードでピン履歴を検索する。"""
+        try:
+            return pin_history.search_history(DECKY_PLUGIN_LOG_DIR, str(app_id), keyword, limit)
+        except Exception as e:
+            logger.error(f"search_pin_history エラー: {e}")
+            return []
+
+    async def get_translation_history_status(self, app_id: int):
+        """翻訳履歴の件数・サイズ情報を返す。"""
+        try:
+            return translation_history.get_game_history_info(
+                DECKY_PLUGIN_LOG_DIR, settingsDir, str(app_id)
+            )
+        except Exception as e:
+            logger.error(f"get_translation_history_status エラー: {e}")
+            return {"app_id": str(app_id), "count": 0, "size_bytes": 0}
+
+    async def delete_pin_history_for_game(self, app_id: int):
+        """ゲーム単位でピン履歴を削除する。"""
+        try:
+            return pin_history.delete_game_pins(DECKY_PLUGIN_LOG_DIR, str(app_id))
+        except Exception as e:
+            logger.error(f"delete_pin_history_for_game エラー: {e}")
+            return {"deleted": False, "error": str(e)}
+
+    async def delete_translation_history_for_game(self, app_id: int):
+        """ゲーム単位で翻訳履歴を削除する。"""
+        try:
+            return translation_history.delete_game_history(DECKY_PLUGIN_LOG_DIR, str(app_id))
+        except Exception as e:
+            logger.error(f"delete_translation_history_for_game エラー: {e}")
+            return {"deleted": False, "error": str(e)}
+
     async def _get_image_size(self, image_bytes: bytes) -> tuple:
         """画像バイトデータからサイズ(width, height)を取得する。
         PILが使えないDecky環境のため、PNGヘッダから直接読み取る。"""

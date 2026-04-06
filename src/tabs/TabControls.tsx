@@ -7,12 +7,16 @@ import {
     ToggleField,
     SliderField,
     TextField,
-    Field
+    Field,
+    ButtonItem,
+    Router
 } from "@decky/ui";
 
-import { VFC } from "react";
+import { VFC, useState, useEffect, useCallback } from "react";
+import { call } from "@decky/api";
 import { useSettings } from "../SettingsContext";
 import { InputMode } from "../Input";
+import { logger } from "../Logger";
 
 // Input mode options for dropdown
 const inputModeOptions = [
@@ -43,6 +47,137 @@ const getInputModeButtons = (mode: string): string => {
         case 'TOUCHPAD_COMBO': return 'Left Pad + Right Pad';
         default: return mode;
     }
+};
+
+// ログ状態の型
+interface LogStatus {
+    translationCount: number;
+    translationSize: number;
+    pinCount: number;
+    pinSize: number;
+}
+
+const formatSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+// Logs セクションコンポーネント
+const LogsSection: VFC = () => {
+    const { settings, updateSetting } = useSettings();
+    const [logStatus, setLogStatus] = useState<LogStatus | null>(null);
+    const [deleting, setDeleting] = useState<string | null>(null);
+
+    const loadLogStatus = useCallback(async () => {
+        try {
+            const mainApp = Router.MainRunningApp;
+            const appId = mainApp?.appid ? Number(mainApp.appid) : 0;
+            if (!appId) { setLogStatus(null); return; }
+
+            const [transStatus, pinStatus] = await Promise.all([
+                call<[number], any>('get_translation_history_status', appId),
+                call<[number], any>('get_pin_history_status', appId),
+            ]);
+
+            setLogStatus({
+                translationCount: transStatus?.count ?? 0,
+                translationSize: transStatus?.size_bytes ?? 0,
+                pinCount: pinStatus?.count ?? 0,
+                pinSize: pinStatus?.total_size_bytes ?? 0,
+            });
+        } catch (err) {
+            logger.error('LogsSection', 'Failed to load log status', err);
+        }
+    }, []);
+
+    useEffect(() => { loadLogStatus(); }, []);
+
+    const handleDelete = async (type: "translation" | "pin") => {
+        const mainApp = Router.MainRunningApp;
+        const appId = mainApp?.appid ? Number(mainApp.appid) : 0;
+        if (!appId) return;
+
+        setDeleting(type);
+        try {
+            if (type === "translation") {
+                await call<[number], any>('delete_translation_history_for_game', appId);
+            } else {
+                await call<[number], any>('delete_pin_history_for_game', appId);
+            }
+            await loadLogStatus();
+        } catch (err) {
+            logger.error('LogsSection', `Failed to delete ${type} history`, err);
+        } finally {
+            setDeleting(null);
+        }
+    };
+
+    return (
+        <PanelSection title="Logs">
+            <PanelSectionRow>
+                <ToggleField
+                    label="Save Translation History"
+                    description="Automatically save translation results for each game"
+                    checked={settings.translationHistoryEnabledDefault ?? true}
+                    onChange={(value) => updateSetting('translationHistoryEnabledDefault', value, 'Translation History')}
+                />
+            </PanelSectionRow>
+
+            <PanelSectionRow>
+                <ToggleField
+                    label="Save Pin History"
+                    description="Automatically save pin records for each game"
+                    checked={settings.pinHistoryEnabledDefault ?? true}
+                    onChange={(value) => updateSetting('pinHistoryEnabledDefault', value, 'Pin History')}
+                />
+            </PanelSectionRow>
+
+            {logStatus && (
+                <PanelSectionRow>
+                    <Field focusable={false} childrenContainerWidth="max">
+                        <div style={{ fontSize: "11px", color: "#aaa", padding: "4px 0" }}>
+                            <div>Translation: {logStatus.translationCount} entries ({formatSize(logStatus.translationSize)})</div>
+                            <div>Pin: {logStatus.pinCount} entries ({formatSize(logStatus.pinSize)})</div>
+                        </div>
+                    </Field>
+                </PanelSectionRow>
+            )}
+
+            <PanelSectionRow>
+                <ButtonItem
+                    layout="below"
+                    onClick={loadLogStatus}
+                >
+                    Refresh Log Status
+                </ButtonItem>
+            </PanelSectionRow>
+
+            {logStatus && logStatus.translationCount > 0 && (
+                <PanelSectionRow>
+                    <ButtonItem
+                        layout="below"
+                        disabled={deleting === "translation"}
+                        onClick={() => handleDelete("translation")}
+                    >
+                        {deleting === "translation" ? "Deleting..." : "Delete Translation Logs"}
+                    </ButtonItem>
+                </PanelSectionRow>
+            )}
+
+            {logStatus && logStatus.pinCount > 0 && (
+                <PanelSectionRow>
+                    <ButtonItem
+                        layout="below"
+                        disabled={deleting === "pin"}
+                        onClick={() => handleDelete("pin")}
+                    >
+                        {deleting === "pin" ? "Deleting..." : "Delete Pin Logs"}
+                    </ButtonItem>
+                </PanelSectionRow>
+            )}
+        </PanelSection>
+    );
 };
 
 interface TabControlsProps {
@@ -307,25 +442,7 @@ export const TabControls: VFC<TabControlsProps> = ({ inputDiagnostics }) => {
                 )}
             </PanelSection>
 
-            <PanelSection title="Logs">
-                <PanelSectionRow>
-                    <ToggleField
-                        label="Save Translation History by Default"
-                        description="Automatically save translation results for each game"
-                        checked={settings.translationHistoryEnabledDefault ?? true}
-                        onChange={(value) => updateSetting('translationHistoryEnabledDefault', value, 'Translation History')}
-                    />
-                </PanelSectionRow>
-
-                <PanelSectionRow>
-                    <ToggleField
-                        label="Save Pin History by Default"
-                        description="Automatically save pin records for each game"
-                        checked={settings.pinHistoryEnabledDefault ?? true}
-                        onChange={(value) => updateSetting('pinHistoryEnabledDefault', value, 'Pin History')}
-                    />
-                </PanelSectionRow>
-            </PanelSection>
+            <LogsSection />
 
             <PanelSection title="Debug">
                 <PanelSectionRow>
