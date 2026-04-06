@@ -351,8 +351,17 @@ export class GameTranslatorLogic {
             if (mainApp?.appid) {
                 try {
                     await call('ensure_game_vision_prompt_file', Number(mainApp.appid), mainApp.display_name || "");
+                    // Agent用: ゲーム情報をバックエンドにキャッシュ
+                    await call('agent_set_running_game', Number(mainApp.appid), mainApp.display_name || "");
                 } catch (e) {
                     logger.warn('Translator', 'Failed to apply Gemini prompt', e);
+                }
+            } else {
+                // ゲーム未起動時はキャッシュをクリアして古い情報が残らないようにする
+                try {
+                    await call('agent_set_running_game', null, null);
+                } catch (e) {
+                    // 無視: agent RPCが未対応の環境でも翻訳フローは継続
                 }
             }
 

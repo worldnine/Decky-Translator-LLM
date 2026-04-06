@@ -57,6 +57,17 @@ Customize translation behavior with prompt files:
 * **Common prompt** — Applied to all games. Edit from the Prompts tab or via SSH at `~/homebrew/settings/decky-translator-prompts/vision-common.txt`
 * **Per-game prompt** — Applied only while a specific game is running. Edit at `~/homebrew/settings/decky-translator-games/{app_id}/vision.txt`
 
+## Agent CLI
+
+An optional CLI for external AI agents and scripts to capture, translate, and describe the Steam Deck screen via SSH.
+
+* **Disabled by default** — enable in Settings → Agent CLI
+* Subcommands: `capture`, `translate`, `describe`, `game`, `prompt`, `capabilities`
+* On-screen notification when the screen is read (thumbnail / dot / message)
+* Read-only — no game input or system modifications
+
+See [AGENT-CLI.md](AGENT-CLI.md) for full documentation ([日本語](AGENT-CLI.ja.md)).
+
 ## License
 
 GNU GPLv3 — same license as the original.

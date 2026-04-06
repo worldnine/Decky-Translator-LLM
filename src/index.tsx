@@ -24,6 +24,7 @@ import { GameTranslatorLogic } from "./Translator";
 import { ProgressInfo } from "./Input";
 import { ActivationIndicator } from "./ActivationIndicator";
 import { SettingsProvider, useSettings } from "./SettingsContext";
+import { AgentIndicator } from "./AgentIndicator";
 import { logger } from "./Logger";
 
 // Import tab components
@@ -263,6 +264,11 @@ export default definePlugin(() => {
         <ActivationIndicatorWithSettings logic={logic}/>
     ));
 
+    // Agent操作インジケーター（外部AIが画面を読み取った時に🔴表示）
+    routerHook.addGlobalComponent("AgentIndicator", () => (
+        <AgentIndicator/>
+    ));
+
     return {
         name: "Translator LLM",
         title: <div className={staticClasses.Title}>Translator LLM</div>,
@@ -273,6 +279,7 @@ export default definePlugin(() => {
             logic.cleanup();
             routerHook.removeGlobalComponent("ImageOverlay");
             routerHook.removeGlobalComponent("HoldActivationIndicator");
+            routerHook.removeGlobalComponent("AgentIndicator");
         },
         alwaysRender: true
     };

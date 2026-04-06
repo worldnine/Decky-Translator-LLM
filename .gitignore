@@ -23,6 +23,8 @@ bower_components
 py_modules/*
 !py_modules/providers/
 !py_modules/migration.py
+!py_modules/agent_core.py
+!py_modules/agent_cli.py
 
 # Editors
 .idea

@@ -57,6 +57,17 @@ Decky公式ストアには登録していません。手動インストールの
 * **共通プロンプト** — 全ゲームに適用。Prompts タブまたは SSH で `~/homebrew/settings/decky-translator-prompts/vision-common.txt` を編集
 * **ゲーム別プロンプト** — 特定ゲーム起動中のみ適用。`~/homebrew/settings/decky-translator-games/{app_id}/vision.txt` を編集
 
+## Agent CLI
+
+外部 AI やスクリプトから SSH 経由で Steam Deck の画面をキャプチャ・翻訳・説明できるオプション機能。
+
+* **デフォルト無効** — 設定 → Agent CLI で有効化
+* サブコマンド: `capture`, `translate`, `describe`, `game`, `prompt`, `capabilities`
+* 画面読み取り時にオーバーレイ通知（サムネイル / ドット / メッセージ）
+* 読み取り専用 — ゲーム操作やシステム変更は行いません
+
+詳細は [AGENT-CLI.ja.md](AGENT-CLI.ja.md) を参照（[English](AGENT-CLI.md)）。
+
 ## ライセンス
 
 GNU GPLv3 — オリジナルと同一ライセンス。

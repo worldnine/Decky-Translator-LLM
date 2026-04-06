@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+# decky-agent-cli エントリポイント
+# 使用例: ./decky-agent-cli capture --purpose "攻略支援: 画面確認" --json
+
+import os
+import sys
+
+# プラグインルート = このスクリプトの配置場所
+PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
+PY_MODULES = os.path.join(PLUGIN_DIR, "py_modules")
+
+if PY_MODULES not in sys.path:
+    sys.path.insert(0, PY_MODULES)
+
+from agent_cli import main
+
+if __name__ == "__main__":
+    main()

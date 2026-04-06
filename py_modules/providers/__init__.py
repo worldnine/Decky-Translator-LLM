@@ -225,3 +225,29 @@ class ProviderManager:
 
         logger.info(f"Vision direct完了: {len(result)} regions")
         return result
+
+    async def describe_screen(
+        self,
+        image_bytes: bytes,
+        image_width: int,
+        image_height: int,
+        prompt: str = None,
+    ) -> Optional[dict]:
+        """攻略支援向け画面説明。構造化JSONを返す。"""
+        vision_provider = self.get_vision_provider()
+        if not vision_provider or not vision_provider.is_available():
+            logger.warning("describe_screen: Vision Providerが利用不可")
+            return None
+
+        image_b64 = base64.b64encode(image_bytes).decode()
+
+        try:
+            result = await vision_provider.describe_screen(
+                image_b64, image_width, image_height, prompt=prompt,
+            )
+        except Exception as e:
+            logger.error(f"describe_screen失敗: {e}")
+            return None
+
+        logger.info(f"describe_screen完了: summary={result.get('summary', '')[:50]}")
+        return result
