@@ -25,6 +25,7 @@ py_modules/*
 !py_modules/migration.py
 !py_modules/agent_core.py
 !py_modules/agent_cli.py
+!py_modules/pin_history.py
 
 # Editors
 .idea

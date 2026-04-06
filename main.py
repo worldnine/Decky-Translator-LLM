@@ -80,6 +80,7 @@ import requests
 
 # Import provider system
 from providers import ProviderManager, NetworkError, ApiKeyError
+import pin_history
 from migration import (
     normalize_gemini_setting,
     extract_prompt_from_content,
@@ -1714,6 +1715,155 @@ class Plugin:
             logger.error(f"Vision translation error: {e}")
             logger.error(traceback.format_exc())
             return {"error": "vision_failed", "message": str(e)}
+
+    # --- ピン機能 RPC ---
+
+    async def pin_capture(self, app_id: int, game_name: str = "", image_data: str = None, trigger: str = "button"):
+        """スクリーンショットをピンとして保存し、バックグラウンドで Gemini 解析する。"""
+        try:
+            pin_id = pin_history.generate_pin_id()
+            capture_source = "reuse" if image_data else "live_capture"
+
+            # 画像データの取得
+            if image_data:
+                img_str = image_data
+                if img_str.startswith('data:image'):
+                    img_str = img_str.split(',', 1)[1]
+                image_bytes = base64.b64decode(img_str)
+            else:
+                # バックエンドでスクリーンショット取得
+                screenshot_b64 = await self.take_screenshot(game_name or "pin")
+                if not screenshot_b64 or isinstance(screenshot_b64, dict):
+                    return {"ok": False, "error": "スクリーンショット取得失敗"}
+                img_str = screenshot_b64
+                if img_str.startswith('data:image'):
+                    img_str = img_str.split(',', 1)[1]
+                image_bytes = base64.b64decode(img_str)
+
+            # 永続画像保存
+            image_path = pin_history.save_image(
+                DECKY_PLUGIN_LOG_DIR, str(app_id), pin_id, image_bytes
+            )
+
+            # pending レコードを保存
+            record = pin_history.create_pin_record(
+                pin_id=pin_id,
+                app_id=app_id,
+                game_name=game_name,
+                trigger=trigger,
+                capture_source=capture_source,
+                image_path=image_path,
+                analysis_status="pending",
+                analysis_model=self._gemini_model,
+                input_language=self._input_language,
+                target_language=self._target_language,
+            )
+            pin_history.append_record(DECKY_PLUGIN_LOG_DIR, str(app_id), record)
+
+            # バックグラウンドで Gemini 解析
+            asyncio.create_task(self._pin_analyze(
+                pin_id, str(app_id), image_bytes
+            ))
+
+            return {
+                "ok": True,
+                "pin_id": pin_id,
+                "image_path": image_path,
+                "analysis_status": "pending",
+            }
+        except Exception as e:
+            logger.error(f"pin_capture エラー: {e}")
+            logger.error(traceback.format_exc())
+            return {"ok": False, "error": str(e)}
+
+    async def _pin_analyze(self, pin_id: str, app_id: str, image_bytes: bytes):
+        """ピンのバックグラウンド Gemini 解析。結果をレコードに反映する。"""
+        try:
+            target_lang = self._target_language
+            input_lang = self._input_language
+
+            # 言語未設定チェック
+            if not target_lang or not self._gemini_api_key:
+                pin_history.update_record(DECKY_PLUGIN_LOG_DIR, app_id, pin_id, {
+                    "analysis_status": "skipped_config_missing",
+                    "regions": [],
+                    "recognized_text": "",
+                    "translated_text": "",
+                    "search_text": "",
+                })
+                logger.info(f"ピン解析スキップ（設定不足）: {pin_id}")
+                return
+
+            if not self._provider_manager:
+                pin_history.update_record(DECKY_PLUGIN_LOG_DIR, app_id, pin_id, {
+                    "analysis_status": "failed",
+                    "error": "Provider manager not initialized",
+                })
+                return
+
+            # 画像サイズ取得
+            image_width, image_height = await self._get_image_size(image_bytes)
+            if not image_width or not image_height:
+                pin_history.update_record(DECKY_PLUGIN_LOG_DIR, app_id, pin_id, {
+                    "analysis_status": "failed",
+                    "error": "画像サイズ取得失敗",
+                })
+                return
+
+            # Gemini 解析（vision_translate と同じ経路）
+            self._reload_common_prompts()
+            result = await self._provider_manager.recognize_and_translate(
+                image_bytes, input_lang, target_lang,
+                image_width, image_height,
+            )
+
+            if result is None:
+                pin_history.update_record(DECKY_PLUGIN_LOG_DIR, app_id, pin_id, {
+                    "analysis_status": "failed",
+                    "error": "Gemini解析結果なし",
+                })
+                logger.warning(f"ピン解析失敗: {pin_id}")
+                return
+
+            # 解析成功 — レコード更新
+            regions = pin_history._normalize_regions(result)
+            recognized_parts = [r.get("text", "") for r in regions if r.get("text")]
+            translated_parts = [r.get("translated_text", "") for r in regions if r.get("translated_text")]
+
+            pin_history.update_record(DECKY_PLUGIN_LOG_DIR, app_id, pin_id, {
+                "analysis_status": "complete",
+                "analysis_model": self._gemini_model,
+                "regions": regions,
+                "recognized_text": "\n".join(recognized_parts),
+                "translated_text": "\n".join(translated_parts),
+                "search_text": pin_history._build_search_text(regions),
+                "error": None,
+            })
+            logger.info(f"ピン解析完了: {pin_id}, {len(regions)} regions")
+
+        except Exception as e:
+            logger.error(f"ピン解析エラー ({pin_id}): {e}")
+            logger.error(traceback.format_exc())
+            pin_history.update_record(DECKY_PLUGIN_LOG_DIR, app_id, pin_id, {
+                "analysis_status": "failed",
+                "error": str(e),
+            })
+
+    async def list_pin_history(self, app_id: int, limit: int = 20):
+        """直近のピン履歴を返す。"""
+        try:
+            return pin_history.list_recent(DECKY_PLUGIN_LOG_DIR, str(app_id), limit)
+        except Exception as e:
+            logger.error(f"list_pin_history エラー: {e}")
+            return []
+
+    async def get_pin_history_status(self, app_id: int):
+        """ピン履歴の件数・サイズ情報を返す。"""
+        try:
+            return pin_history.get_history_info(DECKY_PLUGIN_LOG_DIR, str(app_id))
+        except Exception as e:
+            logger.error(f"get_pin_history_status エラー: {e}")
+            return {"app_id": str(app_id), "count": 0, "total_size_bytes": 0}
 
     async def _get_image_size(self, image_bytes: bytes) -> tuple:
         """画像バイトデータからサイズ(width, height)を取得する。
