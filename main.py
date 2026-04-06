@@ -81,6 +81,7 @@ import requests
 # Import provider system
 from providers import ProviderManager, NetworkError, ApiKeyError
 import pin_history
+import translation_history
 from migration import (
     normalize_gemini_setting,
     extract_prompt_from_content,
@@ -1187,6 +1188,9 @@ class Plugin:
 
     async def ensure_game_vision_prompt_file(self, app_id: int, display_name: str):
         """ゲーム別Vision プロンプトファイルを確保し、内容を読み込んで適用する"""
+        # 翻訳履歴用にゲーム情報を保持
+        self._current_app_id = app_id
+        self._current_app_name = display_name
         try:
             games_dir = self._get_games_dir()
             game_dir = os.path.join(games_dir, str(app_id))
@@ -1703,6 +1707,25 @@ class Plugin:
                 return {"error": "vision_failed", "message": "Vision translation returned no results"}
 
             logger.info(f"Vision Translation完了: {len(result)} regions in {elapsed:.2f}s")
+
+            # 翻訳履歴の保存
+            try:
+                if self._settings.get_setting("translation_history_enabled_default", True):
+                    app_id = getattr(self, "_current_app_id", None)
+                    app_name = getattr(self, "_current_app_name", "") or ""
+                    if app_id:
+                        translation_history.log_translation(
+                            log_dir=DECKY_PLUGIN_LOG_DIR,
+                            app_id=str(app_id),
+                            app_name=app_name,
+                            source="overlay",
+                            target_lang=target_lang,
+                            input_lang=input_lang,
+                            regions=result,
+                        )
+            except Exception as hist_err:
+                logger.debug(f"翻訳履歴保存失敗（翻訳自体は成功）: {hist_err}")
+
             return result
 
         except NetworkError as e:
