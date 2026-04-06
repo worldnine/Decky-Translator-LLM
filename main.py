@@ -809,6 +809,85 @@ def get_cmd_output(cmd, log=True):
         return f"Error: {str(e)}"
 
 
+class NotifySocketServer:
+    """CLI→Plugin 通知用 Unix Domain Socket サーバー。
+    CLIがスクリーンショットを撮った時にリアルタイムで通知を受け取る。"""
+
+    SOCKET_PATH = "/tmp/decky-translator/notify.sock"
+    MAX_MSG_SIZE = 4096
+
+    def __init__(self, on_notification):
+        """on_notification: callable(purpose: str, image_path: str)"""
+        self.on_notification = on_notification
+        self.running = False
+        self.thread = None
+        self.server_sock = None
+
+    def start(self):
+        if self.running:
+            return True
+        self.running = True
+        self.thread = threading.Thread(target=self._serve_loop, daemon=True)
+        self.thread.start()
+        logger.info(f"NotifySocketServer started on {self.SOCKET_PATH}")
+        return True
+
+    def stop(self):
+        self.running = False
+        if self.server_sock:
+            try:
+                self.server_sock.close()
+            except Exception:
+                pass
+        if self.thread:
+            self.thread.join(timeout=2.0)
+            self.thread = None
+        if os.path.exists(self.SOCKET_PATH):
+            try:
+                os.unlink(self.SOCKET_PATH)
+            except Exception:
+                pass
+        logger.info("NotifySocketServer stopped")
+
+    def _serve_loop(self):
+        import socket as _socket
+
+        # 古いソケットファイルがあれば削除
+        if os.path.exists(self.SOCKET_PATH):
+            os.unlink(self.SOCKET_PATH)
+
+        os.makedirs(os.path.dirname(self.SOCKET_PATH), exist_ok=True)
+
+        self.server_sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        self.server_sock.bind(self.SOCKET_PATH)
+        os.chmod(self.SOCKET_PATH, 0o660)
+        self.server_sock.listen(5)
+        self.server_sock.settimeout(1.0)
+
+        while self.running:
+            try:
+                conn, _ = self.server_sock.accept()
+            except _socket.timeout:
+                continue
+            except OSError:
+                break
+            try:
+                data = conn.recv(self.MAX_MSG_SIZE)
+                msg = json.loads(data.decode("utf-8").strip())
+                if msg.get("type") in ("screenshot_taken", "agent_notification"):
+                    self.on_notification(
+                        msg.get("purpose", ""),
+                        msg.get("image_path", ""),
+                        msg.get("mode", "thumbnail"),
+                    )
+            except Exception as e:
+                logger.debug(f"NotifySocket parse error: {e}")
+            finally:
+                conn.close()
+
+        logger.info("NotifySocketServer loop ended")
+
+
 def get_all_children(pid: int) -> list[str]:
     pids = []
     tmpPids = [str(pid)]
@@ -873,6 +952,10 @@ class Plugin:
     _hidraw_monitor: HidrawButtonMonitor = None
     _evdev_monitor: EvdevGamepadMonitor = None
 
+    # Agent CLI（デフォルト無効）
+    _agent_enabled: bool = False
+    _notify_server: NotifySocketServer = None
+
     # Provider system
     _provider_manager: ProviderManager = None
 
@@ -933,6 +1016,25 @@ class Plugin:
                 pass  # frontend-only, just persist to settings file
             elif key == "debug_mode":
                 logger.setLevel(logging.DEBUG if value else logging.INFO)
+            elif key == "agent_enabled":
+                self._agent_enabled = bool(value)
+                if value and not self._notify_server:
+                    self._notify_server = NotifySocketServer(self._on_cli_notification)
+                    self._notify_server.start()
+                elif not value and self._notify_server:
+                    self._notify_server.stop()
+                    self._notify_server = None
+                logger.info(f"Agent CLI {'有効' if value else '無効'}化")
+            elif key in (
+                "advanced_features_enabled",
+                "pin_feature_enabled",
+                "pin_shortcut_enabled",
+                "pin_input_mode",
+                "hold_time_pin",
+                "translation_history_enabled_default",
+                "pin_history_enabled_default",
+            ):
+                pass  # フロントエンド専用、永続化のみ
             elif key in ("gemini_base_url", "vision_llm_base_url", "text_llm_base_url", "llm_base_url"):
                 self._gemini_base_url = value
                 setting_key = "gemini_base_url"
@@ -1196,6 +1298,14 @@ class Plugin:
                 "gemini_base_url": self._gemini_base_url,
                 "gemini_api_key": self._gemini_api_key,
                 "gemini_model": self._gemini_model,
+                "agent_enabled": self._settings.get_setting("agent_enabled", False),
+                "advanced_features_enabled": self._settings.get_setting("advanced_features_enabled", False),
+                "pin_feature_enabled": self._settings.get_setting("pin_feature_enabled", False),
+                "pin_shortcut_enabled": self._settings.get_setting("pin_shortcut_enabled", False),
+                "pin_input_mode": self._settings.get_setting("pin_input_mode", None),
+                "hold_time_pin": self._settings.get_setting("hold_time_pin", 1000),
+                "translation_history_enabled_default": self._settings.get_setting("translation_history_enabled_default", True),
+                "pin_history_enabled_default": self._settings.get_setting("pin_history_enabled_default", True),
             }
             return settings
         except Exception as e:
@@ -1775,6 +1885,229 @@ class Plugin:
             logger.error(f"Error getting hidraw status: {e}")
             return {"success": False, "error": str(e)}
 
+    # --- Agent RPC: 外部AI / CLI 向け読み取り専用インターフェース ---
+
+    # 通知キュー（フロントエンドがポーリングで取得）
+    _agent_notifications: list = []
+
+    def _agent_notify(self, mode: str = "dot", purpose: str = "", thumbnail: str = None):
+        """Agent操作の通知をキューに追加する。
+
+        mode: "dot" | "thumbnail" | "message"
+        """
+        from agent_core import _now_iso
+        notification = {
+            "mode": mode,
+            "timestamp": _now_iso(),
+        }
+        if purpose:
+            notification["purpose"] = purpose[:100]
+        if thumbnail:
+            notification["thumbnail"] = thumbnail
+        self._agent_notifications.append(notification)
+        # 古い通知を捨てる（最大10件）
+        if len(self._agent_notifications) > 10:
+            self._agent_notifications = self._agent_notifications[-10:]
+
+    def _on_cli_notification(self, purpose: str, image_path: str, mode: str = "thumbnail"):
+        """CLI からの UDS 通知コールバック。"""
+        thumbnail = None
+        if mode in ("thumbnail",) and image_path and os.path.exists(image_path):
+            b64 = get_base64_image(image_path)
+            if b64:
+                thumbnail = f"data:image/png;base64,{b64}"
+        self._agent_notify(mode=mode, purpose=purpose, thumbnail=thumbnail)
+        logger.info(f"CLI通知受信 [{mode}]: {purpose[:50]}")
+
+    async def agent_poll_notifications(self):
+        """未読の通知を返してキューをクリアする。フロントエンドがポーリングで呼ぶ。"""
+        notifications = list(self._agent_notifications)
+        self._agent_notifications.clear()
+        return notifications
+
+    async def agent_ping(self):
+        """疎通確認。"""
+        return {"ok": True}
+
+    async def agent_get_capabilities(self):
+        """利用可能な機能一覧を返す。"""
+        from agent_core import get_capabilities
+        return get_capabilities()
+
+    async def agent_get_running_game(self):
+        """現在起動中のゲーム情報を返す。
+        フロントエンドから Router.MainRunningApp 経由で取得した情報を返す。
+        ゲーム情報はフロントエンドのみが持つため、キャッシュされた値を返す。"""
+        return {
+            "ok": True,
+            "action": "game",
+            "game": {
+                "app_id": getattr(self, "_current_app_id", None),
+                "display_name": getattr(self, "_current_app_name", None),
+            },
+        }
+
+    async def agent_set_running_game(self, app_id, display_name):
+        """フロントエンドからゲーム情報を受け取ってキャッシュする。"""
+        self._current_app_id = app_id
+        self._current_app_name = display_name
+        # CLI向けにファイルにも書き出す
+        from agent_core import write_running_game
+        write_running_game(app_id, display_name)
+        logger.debug(f"Agent: ゲーム情報更新 app_id={app_id}, name={display_name}")
+        return True
+
+    def _check_agent_enabled(self, action: str) -> dict:
+        """Agent CLI が無効の場合エラー応答を返す。有効なら None。"""
+        if not self._agent_enabled:
+            return {"ok": False, "action": action,
+                    "error": {"code": "agent_disabled", "message": "Agent CLI is disabled"}}
+        return None
+
+    async def agent_capture_screen(self, purpose: str):
+        """スクリーンショットを取得する。purposeは必須。"""
+        err = self._check_agent_enabled("capture")
+        if err:
+            return err
+        if not purpose:
+            return {"ok": False, "action": "capture",
+                    "error": {"code": "missing_purpose", "message": "purposeは必須です"}}
+
+        from agent_core import capture_screenshot, make_success_response, make_error_response
+
+        logger.info(f"Agent capture: {purpose[:100]}")
+        self._agent_notify(mode="dot", purpose=purpose)
+
+        app_name = getattr(self, "_current_app_name", "") or ""
+
+        result = await capture_screenshot(
+            app_name=app_name,
+            plugin_dir=DECKY_PLUGIN_DIR,
+            decky_home=DECKY_HOME,
+        )
+
+        if "error" in result:
+            return make_error_response("capture", result["error"], result["message"], purpose)
+
+        game_info = await self.agent_get_running_game()
+        return make_success_response(
+            "capture",
+            purpose=purpose,
+            captured_at=result["captured_at"],
+            game=game_info.get("game", {}),
+            image={
+                "path": result["path"],
+                "base64": f"data:image/png;base64,{result['base64']}",
+            },
+        )
+
+    async def agent_translate_screen(self, purpose: str, target_language: str = None, input_language: str = None):
+        """スクリーンショットを取得してVision翻訳する。"""
+        err = self._check_agent_enabled("translate")
+        if err:
+            return err
+        if not purpose:
+            return {"ok": False, "action": "translate",
+                    "error": {"code": "missing_purpose", "message": "purposeは必須です"}}
+
+        from agent_core import capture_screenshot, translate_screen, make_success_response, make_error_response
+
+        logger.info(f"Agent translate: {purpose[:100]}")
+        self._agent_notify(mode="dot", purpose=purpose)
+
+        # 共通プロンプト再読み込み
+        self._reload_common_prompts()
+
+        app_name = getattr(self, "_current_app_name", "") or ""
+
+        # スクリーンショット取得
+        cap_result = await capture_screenshot(
+            app_name=app_name,
+            plugin_dir=DECKY_PLUGIN_DIR,
+            decky_home=DECKY_HOME,
+        )
+        if "error" in cap_result:
+            return make_error_response("translate", cap_result["error"], cap_result["message"], purpose)
+
+        # 翻訳
+        target = target_language or self._target_language
+        input_lang = input_language or self._input_language
+
+        tr_result = await translate_screen(
+            self._provider_manager, cap_result["base64"], target, input_lang,
+        )
+
+        # 一時ファイル削除
+        if cap_result.get("path") and os.path.exists(cap_result["path"]):
+            try:
+                os.remove(cap_result["path"])
+            except Exception:
+                pass
+
+        if "error" in tr_result:
+            return make_error_response("translate", tr_result["error"], tr_result["message"], purpose)
+
+        game_info = await self.agent_get_running_game()
+        return make_success_response(
+            "translate",
+            purpose=purpose,
+            captured_at=cap_result["captured_at"],
+            game=game_info.get("game", {}),
+            regions=tr_result["regions"],
+        )
+
+    async def agent_describe_screen(self, purpose: str, prompt: str = None):
+        """スクリーンショットを取得して攻略支援向け画面説明を返す。"""
+        err = self._check_agent_enabled("describe")
+        if err:
+            return err
+        if not purpose:
+            return {"ok": False, "action": "describe",
+                    "error": {"code": "missing_purpose", "message": "purposeは必須です"}}
+
+        from agent_core import capture_screenshot, describe_screen, make_success_response, make_error_response
+
+        logger.info(f"Agent describe: {purpose[:100]}")
+        self._agent_notify(mode="dot", purpose=purpose)
+
+        # 共通プロンプト再読み込み
+        self._reload_common_prompts()
+
+        app_name = getattr(self, "_current_app_name", "") or ""
+
+        # スクリーンショット取得
+        cap_result = await capture_screenshot(
+            app_name=app_name,
+            plugin_dir=DECKY_PLUGIN_DIR,
+            decky_home=DECKY_HOME,
+        )
+        if "error" in cap_result:
+            return make_error_response("describe", cap_result["error"], cap_result["message"], purpose)
+
+        # 画面説明
+        desc_result = await describe_screen(
+            self._provider_manager, cap_result["base64"], prompt=prompt,
+        )
+
+        # 一時ファイル削除
+        if cap_result.get("path") and os.path.exists(cap_result["path"]):
+            try:
+                os.remove(cap_result["path"])
+            except Exception:
+                pass
+
+        if "error" in desc_result:
+            return make_error_response("describe", desc_result["error"], desc_result["message"], purpose)
+
+        game_info = await self.agent_get_running_game()
+        return make_success_response(
+            "describe",
+            purpose=purpose,
+            captured_at=cap_result["captured_at"],
+            game=game_info.get("game", {}),
+            description=desc_result["description"],
+        )
+
     async def _main(self):
         logger.info("Plugin initialization started")
         try:
@@ -1867,6 +2200,16 @@ class Plugin:
             else:
                 logger.info("evdev not available, external gamepad support disabled")
 
+            # Agent CLI 設定を読み込み、有効時のみソケットサーバーを起動
+            self._agent_enabled = self._settings.get_setting("agent_enabled", False)
+            if self._agent_enabled is None:
+                self._agent_enabled = False
+            if self._agent_enabled:
+                self._notify_server = NotifySocketServer(self._on_cli_notification)
+                self._notify_server.start()
+            else:
+                logger.info("Agent CLI is disabled")
+
         except Exception as e:
             logger.error(f"Error during initialization: {e}")
             logger.error(traceback.format_exc())
@@ -1882,6 +2225,10 @@ class Plugin:
             if self._hidraw_monitor:
                 self._hidraw_monitor.stop()
                 self._hidraw_monitor = None
+
+            if self._notify_server:
+                self._notify_server.stop()
+                self._notify_server = None
 
             std_out_file.close()
             std_err_file.close()

@@ -19,10 +19,18 @@ export interface Settings {
     geminiApiKey: string;
     geminiModel: string;
     debugMode: boolean;
+    agentEnabled: boolean;
     fontScale: number;
     groupingPower: number;
     hideIdenticalTranslations: boolean;
     allowLabelGrowth: boolean;
+    advancedFeaturesEnabled: boolean;
+    pinFeatureEnabled: boolean;
+    pinShortcutEnabled: boolean;
+    pinInputMode: InputMode | null;
+    holdTimePin: number;
+    translationHistoryEnabledDefault: boolean;
+    pinHistoryEnabledDefault: boolean;
 }
 
 interface BackendSettings {
@@ -38,10 +46,18 @@ interface BackendSettings {
     gemini_api_key?: string;
     gemini_model?: string;
     debug_mode?: boolean;
+    agent_enabled?: boolean;
     font_scale?: number;
     grouping_power?: number;
     hide_identical_translations?: boolean;
     allow_label_growth?: boolean;
+    advanced_features_enabled?: boolean;
+    pin_feature_enabled?: boolean;
+    pin_shortcut_enabled?: boolean;
+    pin_input_mode?: number | null;
+    hold_time_pin?: number;
+    translation_history_enabled_default?: boolean;
+    pin_history_enabled_default?: boolean;
 }
 
 type SettingsAction =
@@ -63,10 +79,18 @@ const initialSettings: Settings = {
     geminiApiKey: "",
     geminiModel: "",
     debugMode: false,
+    agentEnabled: false,
     fontScale: 1.0,
     groupingPower: 0.25,
     hideIdenticalTranslations: false,
     allowLabelGrowth: false,
+    advancedFeaturesEnabled: false,
+    pinFeatureEnabled: false,
+    pinShortcutEnabled: false,
+    pinInputMode: null,
+    holdTimePin: 1000,
+    translationHistoryEnabledDefault: true,
+    pinHistoryEnabledDefault: true,
 };
 
 function settingsReducer(state: Settings, action: SettingsAction): Settings {
@@ -123,10 +147,18 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                 geminiApiKey: serverSettings.gemini_api_key || "",
                 geminiModel: serverSettings.gemini_model || "",
                 debugMode: serverSettings.debug_mode || false,
+                agentEnabled: serverSettings.agent_enabled ?? false,
                 fontScale: serverSettings.font_scale ?? 1.0,
                 groupingPower: serverSettings.grouping_power ?? 0.25,
                 hideIdenticalTranslations: serverSettings.hide_identical_translations ?? false,
                 allowLabelGrowth: serverSettings.allow_label_growth ?? false,
+                advancedFeaturesEnabled: serverSettings.advanced_features_enabled ?? false,
+                pinFeatureEnabled: serverSettings.pin_feature_enabled ?? false,
+                pinShortcutEnabled: serverSettings.pin_shortcut_enabled ?? false,
+                pinInputMode: serverSettings.pin_input_mode ?? null,
+                holdTimePin: serverSettings.hold_time_pin ?? 1000,
+                translationHistoryEnabledDefault: serverSettings.translation_history_enabled_default ?? true,
+                pinHistoryEnabledDefault: serverSettings.pin_history_enabled_default ?? true,
             };
 
             dispatch({ type: 'INITIALIZE_SETTINGS', settings: mappedSettings });
@@ -175,10 +207,18 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                 geminiApiKey: 'gemini_api_key',
                 geminiModel: 'gemini_model',
                 debugMode: 'debug_mode',
+                agentEnabled: 'agent_enabled',
                 fontScale: 'font_scale',
                 groupingPower: 'grouping_power',
                 hideIdenticalTranslations: 'hide_identical_translations',
                 allowLabelGrowth: 'allow_label_growth',
+                advancedFeaturesEnabled: 'advanced_features_enabled',
+                pinFeatureEnabled: 'pin_feature_enabled',
+                pinShortcutEnabled: 'pin_shortcut_enabled',
+                pinInputMode: 'pin_input_mode',
+                holdTimePin: 'hold_time_pin',
+                translationHistoryEnabledDefault: 'translation_history_enabled_default',
+                pinHistoryEnabledDefault: 'pin_history_enabled_default',
             };
 
             if (key === 'initialized') return true;

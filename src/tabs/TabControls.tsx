@@ -228,6 +228,105 @@ export const TabControls: VFC<TabControlsProps> = ({ inputDiagnostics }) => {
                 </PanelSectionRow>
             </PanelSection>
 
+            <PanelSection title="Advanced">
+                <PanelSectionRow>
+                    <ToggleField
+                        label="Advanced Features"
+                        description="Show advanced settings: Agent CLI, Pin, Logs, Debug"
+                        checked={settings.advancedFeaturesEnabled ?? false}
+                        onChange={(value) => updateSetting('advancedFeaturesEnabled', value, 'Advanced Features')}
+                    />
+                </PanelSectionRow>
+            </PanelSection>
+
+            {settings.advancedFeaturesEnabled && (
+            <>
+            <PanelSection title="Agent CLI">
+                <PanelSectionRow>
+                    <ToggleField
+                        label="Agent CLI"
+                        description="Allow external AI/scripts to capture and analyze the screen via SSH"
+                        checked={settings.agentEnabled ?? false}
+                        onChange={(value) => updateSetting('agentEnabled', value, 'Agent CLI')}
+                    />
+                </PanelSectionRow>
+            </PanelSection>
+
+            <PanelSection title="Pin">
+                <PanelSectionRow>
+                    <ToggleField
+                        label="Enable Pin Feature"
+                        description="Save screenshots with Gemini analysis for later reference"
+                        checked={settings.pinFeatureEnabled ?? false}
+                        onChange={(value) => updateSetting('pinFeatureEnabled', value, 'Pin Feature')}
+                    />
+                </PanelSectionRow>
+
+                {settings.pinFeatureEnabled && (
+                <>
+                    <PanelSectionRow>
+                        <ToggleField
+                            label="Enable Pin Shortcut"
+                            description="Use a dedicated button shortcut to pin the current screen"
+                            checked={settings.pinShortcutEnabled ?? false}
+                            onChange={(value) => updateSetting('pinShortcutEnabled', value, 'Pin Shortcut')}
+                        />
+                    </PanelSectionRow>
+
+                    {settings.pinShortcutEnabled && (
+                    <>
+                        <PanelSectionRow>
+                            <DropdownItem
+                                label="Pin Shortcut"
+                                description="Select which buttons to hold to pin"
+                                rgOptions={inputModeOptions}
+                                selectedOption={settings.pinInputMode ?? InputMode.L4_BUTTON}
+                                onChange={(option) => updateSetting('pinInputMode', option.data, 'Pin input mode')}
+                            />
+                        </PanelSectionRow>
+
+                        <PanelSectionRow>
+                            <SliderField
+                                value={(settings.holdTimePin ?? 1000) / 1000}
+                                max={3}
+                                min={0}
+                                step={0.1}
+                                label="Hold Time to Pin"
+                                description="Seconds to hold button(s) to pin"
+                                showValue={true}
+                                valueSuffix="s"
+                                onChange={(value) => {
+                                    const milliseconds = Math.round(value * 1000);
+                                    updateSetting('holdTimePin', milliseconds, 'Hold time for pin');
+                                }}
+                            />
+                        </PanelSectionRow>
+                    </>
+                    )}
+                </>
+                )}
+            </PanelSection>
+
+            <PanelSection title="Logs">
+                <PanelSectionRow>
+                    <ToggleField
+                        label="Save Translation History by Default"
+                        description="Automatically save translation results for each game"
+                        checked={settings.translationHistoryEnabledDefault ?? true}
+                        onChange={(value) => updateSetting('translationHistoryEnabledDefault', value, 'Translation History')}
+                    />
+                </PanelSectionRow>
+
+                <PanelSectionRow>
+                    <ToggleField
+                        label="Save Pin History by Default"
+                        description="Automatically save pin records for each game"
+                        checked={settings.pinHistoryEnabledDefault ?? true}
+                        onChange={(value) => updateSetting('pinHistoryEnabledDefault', value, 'Pin History')}
+                    />
+                </PanelSectionRow>
+            </PanelSection>
+
             <PanelSection title="Debug">
                 <PanelSectionRow>
                     <ToggleField
@@ -312,6 +411,8 @@ export const TabControls: VFC<TabControlsProps> = ({ inputDiagnostics }) => {
                     </PanelSectionRow>
                 )}
             </PanelSection>
+            </>
+            )}
         </div>
     );
 };
