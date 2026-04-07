@@ -1764,6 +1764,17 @@ class Plugin:
                 if img_str.startswith('data:image'):
                     img_str = img_str.split(',', 1)[1]
                 image_bytes = base64.b64decode(img_str)
+                # 一時スクリーンショットを削除
+                tmp_path = screenshot_result.get("path", "")
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+
+            # pin_history_enabled_default が OFF なら保存しない
+            if not self._settings.get_setting("pin_history_enabled_default", True):
+                return {"ok": False, "error": "Pin history is disabled"}
 
             # 永続画像保存
             image_path = pin_history.save_image(
