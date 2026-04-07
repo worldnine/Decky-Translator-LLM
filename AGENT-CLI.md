@@ -134,6 +134,76 @@ python3 decky-agent-cli prompt set --app-id 12345 --stdin < game-prompt.txt
 | `--content` | No | Prompt content (for `set`) |
 | `--stdin` | No | Read content from stdin (for `set`) |
 
+### `history` — Translation history
+
+```bash
+# Recent translation history
+python3 decky-agent-cli history recent --app-id 1569580 --json
+
+# Search by keyword
+python3 decky-agent-cli history search --app-id 1569580 --keyword "west wing" --json
+
+# List games with history
+python3 decky-agent-cli history games --json
+```
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `recent` / `search` / `games` | Yes | Action to perform |
+| `--app-id` | recent/search | Game App ID |
+| `--keyword` | search | Search keyword |
+| `--limit` | No | Number of entries (default: 20) |
+
+### `pin` — Pin history
+
+```bash
+# Pin current screen (capture → save → Gemini analysis)
+python3 decky-agent-cli pin capture --app-id 1569580 --app-name "Blue Prince" --json
+
+# List recent pins
+python3 decky-agent-cli pin recent --app-id 1569580 --json
+
+# Search pins
+python3 decky-agent-cli pin search --app-id 1569580 --keyword "WEST WING" --json
+
+# Show pin details
+python3 decky-agent-cli pin show --app-id 1569580 --pin-id <PIN_ID> --json
+
+# Delete a pin (--confirm required)
+python3 decky-agent-cli pin delete --app-id 1569580 --pin-id <PIN_ID> --confirm --json
+```
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `capture` / `recent` / `search` / `show` / `delete` | Yes | Action to perform |
+| `--app-id` | Yes | Game App ID |
+| `--app-name` | capture | App name |
+| `--keyword` | search | Search keyword |
+| `--pin-id` | show/delete | Pin ID |
+| `--confirm` | delete | Confirm deletion |
+
+### `logs` — Log management
+
+```bash
+# Show translation and pin log status
+python3 decky-agent-cli logs status --app-id 1569580 --json
+
+# Delete translation history (--confirm required)
+python3 decky-agent-cli logs clear-translation --app-id 1569580 --confirm --json
+
+# Delete pin history
+python3 decky-agent-cli logs clear-pins --app-id 1569580 --confirm --json
+
+# Delete both
+python3 decky-agent-cli logs clear-all --app-id 1569580 --confirm --json
+```
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `status` / `clear-translation` / `clear-pins` / `clear-all` | Yes | Action to perform |
+| `--app-id` | Yes | Game App ID |
+| `--confirm` | clear-* | Confirm deletion |
+
 ### `capabilities` — List available commands
 
 ```bash
@@ -187,6 +257,12 @@ Errors are returned as structured JSON when using `--json`:
 | 2 | Argument error |
 | 3 | Configuration / communication error |
 
-## Read-Only
+## Data Operations
 
-Agent CLI is read-only. It does not perform any game input or system modifications.
+Agent CLI does not perform any game input or system modifications, but it **creates and deletes plugin data**:
+
+- `pin capture`: Permanently saves screenshots and metadata
+- `pin delete`: Logically deletes a pin record
+- `logs clear-*`: Physically deletes translation/pin history
+
+Destructive commands require the `--confirm` flag.

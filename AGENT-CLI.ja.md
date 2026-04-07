@@ -136,6 +136,76 @@ python3 decky-agent-cli prompt set --app-id 12345 --stdin < game-prompt.txt
 | `--content`   | No  | プロンプト内容（`set` 時）         |
 | `--stdin`     | No  | stdin から内容を読む（`set` 時）   |
 
+### `history` — 翻訳履歴
+
+```bash
+# 直近の翻訳履歴
+python3 decky-agent-cli history recent --app-id 1569580 --json
+
+# キーワード検索
+python3 decky-agent-cli history search --app-id 1569580 --keyword "西棟" --json
+
+# 履歴のあるゲーム一覧
+python3 decky-agent-cli history games --json
+```
+
+| オプション       | 必須                    | 説明                        |
+| ----------- | --------------------- | ------------------------- |
+| `recent` / `search` / `games` | Yes | 実行するアクション |
+| `--app-id`  | recent/search 時       | ゲームの App ID               |
+| `--keyword` | search 時              | 検索キーワード                   |
+| `--limit`   | No                    | 取得件数 (default: 20)        |
+
+### `pin` — ピン履歴
+
+```bash
+# ピン保存（スクショ→保存→Gemini解析）
+python3 decky-agent-cli pin capture --app-id 1569580 --app-name "Blue Prince" --json
+
+# 直近のピン一覧
+python3 decky-agent-cli pin recent --app-id 1569580 --json
+
+# キーワード検索
+python3 decky-agent-cli pin search --app-id 1569580 --keyword "WEST WING" --json
+
+# 1件の詳細表示
+python3 decky-agent-cli pin show --app-id 1569580 --pin-id <PIN_ID> --json
+
+# 1件の削除（--confirm 必須）
+python3 decky-agent-cli pin delete --app-id 1569580 --pin-id <PIN_ID> --confirm --json
+```
+
+| オプション       | 必須                   | 説明                      |
+| ----------- | -------------------- | ----------------------- |
+| `capture` / `recent` / `search` / `show` / `delete` | Yes | 実行するアクション |
+| `--app-id`  | Yes                  | ゲームの App ID             |
+| `--app-name` | capture 時            | アプリ名                    |
+| `--keyword` | search 時             | 検索キーワード                 |
+| `--pin-id`  | show/delete 時        | ピン ID                   |
+| `--confirm` | delete 時             | 削除確認                    |
+
+### `logs` — ログ管理
+
+```bash
+# 翻訳・ピン両方の件数/サイズ表示
+python3 decky-agent-cli logs status --app-id 1569580 --json
+
+# 翻訳履歴を削除（--confirm 必須）
+python3 decky-agent-cli logs clear-translation --app-id 1569580 --confirm --json
+
+# ピン履歴を削除
+python3 decky-agent-cli logs clear-pins --app-id 1569580 --confirm --json
+
+# 両方削除
+python3 decky-agent-cli logs clear-all --app-id 1569580 --confirm --json
+```
+
+| オプション       | 必須  | 説明                      |
+| ----------- | --- | ----------------------- |
+| `status` / `clear-translation` / `clear-pins` / `clear-all` | Yes | 実行するアクション |
+| `--app-id`  | Yes | ゲームの App ID             |
+| `--confirm` | clear 系 | 削除確認                    |
+
 ### `capabilities` — 利用可能コマンド一覧
 
 ```bash
@@ -189,8 +259,12 @@ ssh deck@<DECK_IP> "cd ~/homebrew/plugins/decky-translator-llm && \
 | 2     | 引数エラー    |
 | 3     | 設定・通信エラー |
 
-## 読み取り専用
+## データ操作について
 
-Agent CLI は読み取り専用です。ゲーム操作やシステム変更は行いません。
+Agent CLI はゲーム操作やシステム変更は行いませんが、プラグインの **保存データの生成・削除** を行います。
 
-⠀
+- `pin capture`: スクリーンショットとメタデータを永続保存
+- `pin delete`: ピンレコードの論理削除
+- `logs clear-*`: 翻訳履歴・ピン履歴の物理削除
+
+削除系コマンドには `--confirm` フラグが必須です。
