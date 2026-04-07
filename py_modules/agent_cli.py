@@ -193,49 +193,70 @@ def _output_human(data: dict):
         print(f"利用可能コマンド: {', '.join(caps)}")
         print(f"読み取り専用: {data.get('read_only', False)}")
 
-    elif action == "pin_capture":
-        print(f"ピン保存完了: {data.get('pin_id', '?')}")
-        print(f"  画像: {data.get('image_path', '?')}")
-        print(f"  解析: {data.get('analysis_status', '?')}")
+    elif action == "pin":
+        sub = data.get("sub_action", "")
+        if sub == "capture":
+            print(f"ピン保存完了: {data.get('pin_id', '?')}")
+            print(f"  画像: {data.get('image_path', '?')}")
+            print(f"  解析: {data.get('analysis_status', '?')}")
+        elif sub == "recent":
+            pins = data.get("pins", [])
+            print(f"ピン一覧: {len(pins)} 件")
+            for p in pins:
+                status = p.get("analysis_status", "?")
+                text = (p.get("translated_text") or p.get("recognized_text") or "")[:60]
+                print(f"  [{p.get('created_at', '?')[:16]}] {status} | {text}")
+        elif sub == "search":
+            pins = data.get("pins", [])
+            print(f"検索結果: {len(pins)} 件")
+            for p in pins:
+                text = (p.get("translated_text") or p.get("recognized_text") or "")[:60]
+                print(f"  [{p.get('created_at', '?')[:16]}] {text}")
+        elif sub == "show":
+            p = data.get("pin", {})
+            print(f"ピン詳細: {p.get('pin_id', '?')}")
+            print(f"  日時: {p.get('created_at', '?')}")
+            print(f"  ゲーム: {p.get('game_name', '?')}")
+            print(f"  解析: {p.get('analysis_status', '?')}")
+            print(f"  画像: {p.get('image_path', '?')}")
+            if p.get("recognized_text"):
+                print(f"  原文: {p['recognized_text'][:200]}")
+            if p.get("translated_text"):
+                print(f"  翻訳: {p['translated_text'][:200]}")
+        elif sub == "delete":
+            print(f"ピン削除: {data.get('deleted', False)}")
 
-    elif action == "pin_recent":
-        pins = data.get("pins", [])
-        print(f"ピン一覧: {len(pins)} 件")
-        for p in pins:
-            status = p.get("analysis_status", "?")
-            text = (p.get("translated_text") or p.get("recognized_text") or "")[:60]
-            print(f"  [{p.get('created_at', '?')[:16]}] {status} | {text}")
+    elif action == "history":
+        sub = data.get("sub_action", "")
+        if sub == "recent":
+            entries = data.get("entries", [])
+            print(f"翻訳履歴: {len(entries)} 件")
+            for e in entries:
+                regions = e.get("regions", [])
+                text = regions[0].get("translated_text", "")[:60] if regions else ""
+                print(f"  [{e.get('ts', '?')}] {text}")
+        elif sub == "search":
+            entries = data.get("entries", [])
+            print(f"検索結果: {len(entries)} 件")
+            for e in entries:
+                regions = e.get("regions", [])
+                text = regions[0].get("translated_text", "")[:60] if regions else ""
+                print(f"  [{e.get('ts', '?')}] {text}")
+        elif sub == "games":
+            games = data.get("games", [])
+            print(f"ゲーム一覧: {len(games)} 件")
+            for g in games:
+                print(f"  {g.get('app_name', '?')} (ID: {g.get('app_id', '?')}) — {g.get('count', 0)} 件")
 
-    elif action == "pin_search":
-        pins = data.get("pins", [])
-        print(f"検索結果: {len(pins)} 件")
-        for p in pins:
-            text = (p.get("translated_text") or p.get("recognized_text") or "")[:60]
-            print(f"  [{p.get('created_at', '?')[:16]}] {text}")
-
-    elif action == "pin_show":
-        p = data.get("pin", {})
-        print(f"ピン詳細: {p.get('pin_id', '?')}")
-        print(f"  日時: {p.get('created_at', '?')}")
-        print(f"  ゲーム: {p.get('game_name', '?')}")
-        print(f"  解析: {p.get('analysis_status', '?')}")
-        print(f"  画像: {p.get('image_path', '?')}")
-        if p.get("recognized_text"):
-            print(f"  原文: {p['recognized_text'][:200]}")
-        if p.get("translated_text"):
-            print(f"  翻訳: {p['translated_text'][:200]}")
-
-    elif action == "pin_delete":
-        print(f"ピン削除: {data.get('deleted', False)}")
-
-    elif action == "logs_status":
-        t = data.get("translation", {})
-        p = data.get("pin", {})
-        print(f"翻訳履歴: {t.get('count', 0)} 件 ({t.get('size_bytes', 0)} bytes)")
-        print(f"ピン履歴: {p.get('count', 0)} 件 ({p.get('total_size_bytes', 0)} bytes)")
-
-    elif action in ("logs_clear_translation", "logs_clear_pins", "logs_clear_all"):
-        print(f"削除完了: {data.get('results', {})}")
+    elif action == "logs":
+        sub = data.get("sub_action", "")
+        if sub == "status":
+            t = data.get("translation", {})
+            p = data.get("pin", {})
+            print(f"翻訳履歴: {t.get('count', 0)} 件 ({t.get('size_bytes', 0)} bytes)")
+            print(f"ピン履歴: {p.get('count', 0)} 件 ({p.get('total_size_bytes', 0)} bytes)")
+        else:
+            print(f"削除完了: {data.get('results', {})}")
 
 
 async def cmd_capture(args):
@@ -446,7 +467,7 @@ async def cmd_pin(args):
             plugin_dir=PLUGIN_DIR,
         )
         if "error" in cap_result:
-            return make_error_response("pin_capture", cap_result["error"], cap_result["message"])
+            return make_error_response("pin", cap_result["error"], cap_result["message"])
 
         notify_plugin(getattr(args, "purpose", "") or "pin", cap_result.get("path", ""), mode="dot")
 
@@ -468,68 +489,91 @@ async def cmd_pin(args):
         )
         pin_history.append_record(DEFAULT_LOG_DIR, app_id, record)
 
-        # Gemini解析
+        # Gemini解析 → complete_analysis サービス関数に委譲
         try:
             tr_result = await translate_screen(pm, cap_result["base64"], target_lang, input_lang)
             if "error" not in tr_result:
-                regions = pin_history._normalize_regions(tr_result.get("regions", []))
-                recognized = [r.get("text", "") for r in regions if r.get("text")]
-                translated = [r.get("translated_text", "") for r in regions if r.get("translated_text")]
-                pin_history.update_record(DEFAULT_LOG_DIR, app_id, pid, {
-                    "analysis_status": "complete",
-                    "regions": regions,
-                    "recognized_text": "\n".join(recognized),
-                    "translated_text": "\n".join(translated),
-                    "search_text": pin_history._build_search_text(regions),
-                    "error": None,
-                })
+                pin_history.complete_analysis(
+                    DEFAULT_LOG_DIR, app_id, pid,
+                    regions=tr_result.get("regions", []),
+                    model=settings.get("gemini_model", ""),
+                )
             else:
-                pin_history.update_record(DEFAULT_LOG_DIR, app_id, pid, {
-                    "analysis_status": "failed",
-                    "error": tr_result.get("message", "解析失敗"),
-                })
+                pin_history.complete_analysis(
+                    DEFAULT_LOG_DIR, app_id, pid,
+                    regions=[], error=tr_result.get("message", "解析失敗"),
+                )
         except Exception as e:
-            pin_history.update_record(DEFAULT_LOG_DIR, app_id, pid, {
-                "analysis_status": "failed", "error": str(e),
-            })
+            pin_history.complete_analysis(
+                DEFAULT_LOG_DIR, app_id, pid,
+                regions=[], error=str(e),
+            )
 
         _cleanup_screenshot(cap_result)
-        final = pin_history.list_recent(DEFAULT_LOG_DIR, app_id, 1)
-        pin_data = final[0] if final else record
-        return make_success_response("pin_capture", pin_id=pid, image_path=image_path,
+        pin_data = pin_history.get_pin_by_id(DEFAULT_LOG_DIR, app_id, pid) or record
+        return make_success_response("pin", sub_action="capture", pin_id=pid,
+                                     image_path=image_path,
                                      analysis_status=pin_data.get("analysis_status", "pending"))
 
     elif sub == "recent":
         limit = getattr(args, "limit", 20) or 20
         pins = pin_history.list_recent(DEFAULT_LOG_DIR, app_id, limit)
-        return make_success_response("pin_recent", pins=pins, count=len(pins))
+        return make_success_response("pin", sub_action="recent", pins=pins, count=len(pins))
 
     elif sub == "search":
         keyword = getattr(args, "keyword", "") or ""
         if not keyword:
-            return make_error_response("pin_search", "missing_keyword", "--keyword is required")
+            return make_error_response("pin", "missing_keyword", "--keyword is required")
         pins = pin_history.search_history(DEFAULT_LOG_DIR, app_id, keyword)
-        return make_success_response("pin_search", pins=pins, count=len(pins), keyword=keyword)
+        return make_success_response("pin", sub_action="search", pins=pins, count=len(pins), keyword=keyword)
 
     elif sub == "show":
         pin_id = getattr(args, "pin_id", "") or ""
         if not pin_id:
-            return make_error_response("pin_show", "missing_pin_id", "--pin-id is required")
-        all_pins = pin_history.list_recent(DEFAULT_LOG_DIR, app_id, 1000)
-        found = [p for p in all_pins if p.get("pin_id") == pin_id]
-        if not found:
-            return make_error_response("pin_show", "not_found", f"Pin {pin_id} not found")
-        return make_success_response("pin_show", pin=found[0])
+            return make_error_response("pin", "missing_pin_id", "--pin-id is required")
+        pin = pin_history.get_pin_by_id(DEFAULT_LOG_DIR, app_id, pin_id)
+        if not pin:
+            return make_error_response("pin", "not_found", f"Pin {pin_id} not found")
+        return make_success_response("pin", sub_action="show", pin=pin)
 
     elif sub == "delete":
         pin_id = getattr(args, "pin_id", "") or ""
         if not pin_id:
-            return make_error_response("pin_delete", "missing_pin_id", "--pin-id is required")
-        # JSONL からは削除せず analysis_status を "deleted" に更新
+            return make_error_response("pin", "missing_pin_id", "--pin-id is required")
+        if not getattr(args, "confirm", False):
+            return make_error_response("pin", "confirm_required", "--confirm is required for delete")
         pin_history.update_record(DEFAULT_LOG_DIR, app_id, pin_id, {"analysis_status": "deleted"})
-        return make_success_response("pin_delete", deleted=True, pin_id=pin_id)
+        return make_success_response("pin", sub_action="delete", deleted=True, pin_id=pin_id)
 
     return make_error_response("pin", "invalid_action", f"Unknown pin action: {sub}")
+
+
+async def cmd_history(args):
+    """history サブコマンド — 翻訳履歴の操作。"""
+    err = _check_agent_enabled("history")
+    if err:
+        return err
+
+    sub = args.history_action
+    app_id = str(getattr(args, "app_id", 0) or 0)
+
+    if sub == "recent":
+        limit = getattr(args, "limit", 20) or 20
+        entries = translation_history.list_recent(DEFAULT_LOG_DIR, app_id, limit)
+        return make_success_response("history", sub_action="recent", entries=entries, count=len(entries))
+
+    elif sub == "search":
+        keyword = getattr(args, "keyword", "") or ""
+        if not keyword:
+            return make_error_response("history", "missing_keyword", "--keyword is required")
+        entries = translation_history.search_history(DEFAULT_LOG_DIR, app_id, keyword)
+        return make_success_response("history", sub_action="search", entries=entries, count=len(entries), keyword=keyword)
+
+    elif sub == "games":
+        games = translation_history.list_games(DEFAULT_LOG_DIR)
+        return make_success_response("history", sub_action="games", games=games, count=len(games))
+
+    return make_error_response("history", "invalid_action", f"Unknown history action: {sub}")
 
 
 async def cmd_logs(args):
@@ -544,20 +588,27 @@ async def cmd_logs(args):
     if sub == "status":
         t_info = translation_history.get_game_history_info(DEFAULT_LOG_DIR, DEFAULT_SETTINGS_DIR, app_id)
         p_info = pin_history.get_history_info(DEFAULT_LOG_DIR, app_id)
-        return make_success_response("logs_status", translation=t_info, pin=p_info)
+        return make_success_response("logs", sub_action="status", translation=t_info, pin=p_info)
 
     elif sub == "clear-translation":
+        if not getattr(args, "confirm", False):
+            return make_error_response("logs", "confirm_required", "--confirm is required for delete")
         result = translation_history.delete_game_history(DEFAULT_LOG_DIR, app_id)
-        return make_success_response("logs_clear_translation", results=result)
+        return make_success_response("logs", sub_action="clear-translation", results=result)
 
     elif sub == "clear-pins":
+        if not getattr(args, "confirm", False):
+            return make_error_response("logs", "confirm_required", "--confirm is required for delete")
         result = pin_history.delete_game_pins(DEFAULT_LOG_DIR, app_id)
-        return make_success_response("logs_clear_pins", results=result)
+        return make_success_response("logs", sub_action="clear-pins", results=result)
 
     elif sub == "clear-all":
+        if not getattr(args, "confirm", False):
+            return make_error_response("logs", "confirm_required", "--confirm is required for delete")
         t_result = translation_history.delete_game_history(DEFAULT_LOG_DIR, app_id)
         p_result = pin_history.delete_game_pins(DEFAULT_LOG_DIR, app_id)
-        return make_success_response("logs_clear_all", results={"translation": t_result, "pin": p_result})
+        return make_success_response("logs", sub_action="clear-all",
+                                     results={"translation": t_result, "pin": p_result})
 
     return make_error_response("logs", "invalid_action", f"Unknown logs action: {sub}")
 
@@ -623,6 +674,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_prompt.add_argument("--stdin", action="store_true", help="stdinからプロンプトを読む（set時）")
     _add_common(p_prompt)
 
+    # history
+    p_history = subparsers.add_parser("history", help="翻訳履歴の操作")
+    p_history.add_argument("history_action", choices=["recent", "search", "games"],
+                           help="recent=直近一覧, search=検索, games=ゲーム一覧")
+    p_history.add_argument("--app-id", type=int, help="ゲームのApp ID（recent/search時）")
+    p_history.add_argument("--keyword", help="検索キーワード（search時）")
+    p_history.add_argument("--limit", type=int, default=20, help="取得件数（recent時、デフォルト20）")
+    _add_common(p_history)
+
     # pin
     p_pin = subparsers.add_parser("pin", help="ピン履歴の操作")
     p_pin.add_argument("pin_action", choices=["capture", "recent", "search", "show", "delete"],
@@ -633,6 +693,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_pin.add_argument("--keyword", help="検索キーワード（search時）")
     p_pin.add_argument("--pin-id", help="ピンID（show/delete時）")
     p_pin.add_argument("--limit", type=int, default=20, help="取得件数（recent時、デフォルト20）")
+    p_pin.add_argument("--confirm", action="store_true", help="削除を確認（delete時に必須）")
     _add_common(p_pin)
 
     # logs
@@ -640,6 +701,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_logs.add_argument("logs_action", choices=["status", "clear-translation", "clear-pins", "clear-all"],
                         help="status=状態, clear-translation=翻訳履歴削除, clear-pins=ピン削除, clear-all=全削除")
     p_logs.add_argument("--app-id", type=int, required=True, help="ゲームのApp ID")
+    p_logs.add_argument("--confirm", action="store_true", help="削除を確認（clear系に必須）")
     _add_common(p_logs)
 
     return parser
@@ -652,6 +714,7 @@ COMMAND_MAP = {
     "game": cmd_game,
     "capabilities": cmd_capabilities,
     "prompt": cmd_prompt,
+    "history": cmd_history,
     "pin": cmd_pin,
     "logs": cmd_logs,
 }

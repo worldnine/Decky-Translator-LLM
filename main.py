@@ -1854,36 +1854,27 @@ class Plugin:
             )
 
             if result is None:
-                pin_history.update_record(DECKY_PLUGIN_LOG_DIR, app_id, pin_id, {
-                    "analysis_status": "failed",
-                    "error": "Gemini解析結果なし",
-                })
+                pin_history.complete_analysis(
+                    DECKY_PLUGIN_LOG_DIR, app_id, pin_id,
+                    regions=[], error="Gemini解析結果なし",
+                )
                 logger.warning(f"ピン解析失敗: {pin_id}")
                 return
 
-            # 解析成功 — レコード更新
-            regions = pin_history._normalize_regions(result)
-            recognized_parts = [r.get("text", "") for r in regions if r.get("text")]
-            translated_parts = [r.get("translated_text", "") for r in regions if r.get("translated_text")]
-
-            pin_history.update_record(DECKY_PLUGIN_LOG_DIR, app_id, pin_id, {
-                "analysis_status": "complete",
-                "analysis_model": self._gemini_model,
-                "regions": regions,
-                "recognized_text": "\n".join(recognized_parts),
-                "translated_text": "\n".join(translated_parts),
-                "search_text": pin_history._build_search_text(regions),
-                "error": None,
-            })
-            logger.info(f"ピン解析完了: {pin_id}, {len(regions)} regions")
+            # 解析成功
+            pin_history.complete_analysis(
+                DECKY_PLUGIN_LOG_DIR, app_id, pin_id,
+                regions=result, model=self._gemini_model,
+            )
+            logger.info(f"ピン解析完了: {pin_id}, {len(result)} regions")
 
         except Exception as e:
             logger.error(f"ピン解析エラー ({pin_id}): {e}")
             logger.error(traceback.format_exc())
-            pin_history.update_record(DECKY_PLUGIN_LOG_DIR, app_id, pin_id, {
-                "analysis_status": "failed",
-                "error": str(e),
-            })
+            pin_history.complete_analysis(
+                DECKY_PLUGIN_LOG_DIR, app_id, pin_id,
+                regions=[], error=str(e),
+            )
 
     async def list_pin_history(self, app_id: int, limit: int = 20):
         """直近のピン履歴を返す。"""

@@ -300,6 +300,6 @@ def get_capabilities() -> dict:
     """利用可能な機能一覧を返す。"""
     return make_success_response(
         "capabilities",
-        capabilities=["capture", "translate", "describe", "game", "prompt"],
-        read_only=True,
+        capabilities=["capture", "translate", "describe", "game", "prompt", "pin", "logs"],
+        read_only=False,
     )

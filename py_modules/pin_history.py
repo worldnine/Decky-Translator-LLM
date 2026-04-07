@@ -75,7 +75,7 @@ def save_image(log_dir: str, app_id: str, pin_id: str, image_bytes: bytes) -> st
     return str(filepath)
 
 
-def _build_search_text(regions: list) -> str:
+def build_search_text(regions: list) -> str:
     """検索用テキストを生成する。"""
     parts = []
     for r in regions:
@@ -90,7 +90,7 @@ def _build_search_text(regions: list) -> str:
     return "\n".join(parts)
 
 
-def _normalize_regions(regions: list) -> list:
+def normalize_regions(regions: list) -> list:
     """regionリストを正規化する。座標情報も保持。"""
     normalized = []
     for r in regions:
@@ -132,7 +132,7 @@ def create_pin_record(
 ) -> dict:
     """ピンレコードを生成する。"""
     regions = regions or []
-    normalized = _normalize_regions(regions)
+    normalized = normalize_regions(regions)
 
     recognized_parts = []
     translated_parts = []
@@ -158,7 +158,7 @@ def create_pin_record(
         "regions": normalized,
         "recognized_text": "\n".join(recognized_parts),
         "translated_text": "\n".join(translated_parts),
-        "search_text": _build_search_text(normalized),
+        "search_text": build_search_text(normalized),
         "error": error,
     }
 
@@ -303,6 +303,53 @@ def get_history_info(log_dir: str, app_id: str) -> dict:
         "images_size_bytes": images_size,
         "total_size_bytes": jsonl_size + images_size,
     }
+
+
+def get_pin_by_id(log_dir: str, app_id: str, pin_id: str) -> dict:
+    """pin_id で 1 件取得する。見つからなければ空 dict。"""
+    filepath = _jsonl_path(log_dir, app_id)
+    if not filepath.exists():
+        return {}
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if entry.get("pin_id") == pin_id:
+            return entry
+    return {}
+
+
+def complete_analysis(log_dir: str, app_id: str, pin_id: str,
+                      regions: list, model: str = "", error: str = None):
+    """解析結果をレコードに反映するサービス関数。"""
+    if error:
+        update_record(log_dir, app_id, pin_id, {
+            "analysis_status": "failed",
+            "error": error,
+        })
+        return
+
+    normalized = normalize_regions(regions)
+    recognized = [r.get("text", "") for r in normalized if r.get("text")]
+    translated = [r.get("translated_text", "") for r in normalized if r.get("translated_text")]
+
+    update_record(log_dir, app_id, pin_id, {
+        "analysis_status": "complete",
+        "analysis_model": model,
+        "regions": normalized,
+        "recognized_text": "\n".join(recognized),
+        "translated_text": "\n".join(translated),
+        "search_text": build_search_text(normalized),
+        "error": None,
+    })
 
 
 def delete_game_pins(log_dir: str, app_id: str) -> dict:
