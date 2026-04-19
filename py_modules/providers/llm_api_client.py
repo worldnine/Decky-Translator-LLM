@@ -50,6 +50,7 @@ def _execute_with_retry(
     request_fn: Callable[[], "requests.Response"],
     *,
     api_label: str,
+    on_retry: Optional[Callable[[dict], None]] = None,
 ) -> "requests.Response":
     """HTTP リクエストを指数バックオフでリトライする。
 
@@ -58,6 +59,10 @@ def _execute_with_retry(
     - ConnectionError / Timeout → transient 扱い（2s→5s→10s ±30%）
     - それ以外のステータスコードはそのまま response を返す（呼び出し側で処理）
     - 累積 _TOTAL_RETRY_BUDGET_SEC を超えそうならリトライ打ち切り
+
+    on_retry: リトライ決定時（sleep 直前）に呼ばれるコールバック。
+        引数 dict: {attempt, max, delay, status}
+        UI の「再試行中 (n/3)」表示に利用する。
     """
     start = time.monotonic()
     max_retries = len(_RETRY_DELAYS_SERVER_BUSY)
@@ -114,6 +119,16 @@ def _execute_with_retry(
             f"{api_label} 一時エラー({status_str})、"
             f"{delay:.1f}秒後に再試行 ({attempt}/{max_retries})"
         )
+        if on_retry is not None:
+            try:
+                on_retry({
+                    "attempt": attempt,
+                    "max": max_retries,
+                    "delay": delay,
+                    "status": status_str,
+                })
+            except Exception as cb_err:
+                logger.debug(f"on_retry callback failed: {cb_err}")
         time.sleep(delay)
 
     # リトライ使い切り: 最後の例外を投げるか、最終レスポンスを返す
@@ -191,6 +206,7 @@ class LlmApiClient:
         response_format: dict = None,
         max_tokens: int = None,
         timeout: float = 30.0,
+        on_retry: Optional[Callable[[dict], None]] = None,
     ) -> str:
         """LLM APIを呼び出す。Geminiの場合はネイティブAPIを使用。
 
@@ -199,6 +215,8 @@ class LlmApiClient:
             ApiKeyError: APIキー不正
             NetworkError: ネットワークエラー
             RateLimitError: レート制限
+
+        on_retry: リトライ発生時のコールバック（UI表示用）。
         """
         if not self._base_url or not self._model:
             raise ConfigurationError("LLMのbase_urlとmodelを設定してください")
@@ -206,15 +224,18 @@ class LlmApiClient:
         if self.is_gemini():
             return self._call_gemini_native(
                 messages, temperature, response_format, max_tokens, timeout,
+                on_retry=on_retry,
             )
 
         return self._call_openai_compatible(
             messages, temperature, response_format, max_tokens, timeout,
+            on_retry=on_retry,
         )
 
     def _call_gemini_native(
         self, messages: list, temperature: float,
         response_format: dict, max_tokens: int, timeout: float,
+        on_retry: Optional[Callable[[dict], None]] = None,
     ) -> str:
         """Gemini ネイティブAPIを呼び出す。thinkingConfig対応。"""
         base = self._base_url
@@ -296,6 +317,7 @@ class LlmApiClient:
                     url, headers=headers, json=payload, timeout=timeout,
                 ),
                 api_label="Gemini",
+                on_retry=on_retry,
             )
 
             if response.status_code == 401 or response.status_code == 403:
@@ -343,6 +365,7 @@ class LlmApiClient:
     def _call_openai_compatible(
         self, messages: list, temperature: float,
         response_format: dict, max_tokens: int, timeout: float,
+        on_retry: Optional[Callable[[dict], None]] = None,
     ) -> str:
         """OpenAI API互換エンドポイントを呼び出す。"""
         url = f"{self._base_url}/chat/completions"
@@ -388,6 +411,7 @@ class LlmApiClient:
                     url, headers=headers, json=payload, timeout=timeout,
                 ),
                 api_label="LLM",
+                on_retry=on_retry,
             )
 
             if response.status_code == 401:

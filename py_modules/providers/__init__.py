@@ -48,7 +48,19 @@ class ProviderManager:
         self._vision_mode = "direct"
         self._vision_coordinate_mode = "pixel"
 
+        # 翻訳中のリトライ状態（フロントのポーリング用）
+        # recognize_and_translate 実行中のみセットされ、終了時にクリアされる
+        self._retry_status: Optional[dict] = None
+
         logger.debug("ProviderManager initialized")
+
+    def _record_retry(self, info: dict) -> None:
+        """LlmApiClient からリトライ発生時に呼ばれるコールバック。"""
+        self._retry_status = info
+
+    def get_retry_status(self) -> Optional[dict]:
+        """現在のリトライ状態を返す。翻訳中でなければ None。"""
+        return self._retry_status
 
     def configure_vision(
         self,
@@ -186,10 +198,13 @@ class ProviderManager:
 
         image_b64 = base64.b64encode(image_bytes).decode()
 
+        # リトライ状態を初期化（前回の残骸をクリア）
+        self._retry_status = None
         try:
             raw_regions, reported_mode = await vision_provider.direct_translate(
                 image_b64, source_lang, target_lang,
                 image_width, image_height,
+                on_retry=self._record_retry,
             )
         except (NetworkError, ApiKeyError, RateLimitError, ConfigurationError) as e:
             # フロントのエラーハンドリング（vision_translate RPC）に委ねる
@@ -198,6 +213,9 @@ class ProviderManager:
         except Exception as e:
             logger.error(f"Vision direct 予期せぬエラー: {e}")
             return None
+        finally:
+            # 翻訳終了時にリトライ状態をクリア（ポーリング側が None を受け取れるように）
+            self._retry_status = None
 
         # coordinate_modeの判定: LLMの自己申告を優先、未申告時は既存設定を維持
         if reported_mode and "pixel" in str(reported_mode).lower():

@@ -3,7 +3,7 @@
 import { call, toaster } from "@decky/api";
 import { Router } from "@decky/ui";
 import { NetworkError, ApiKeyError, RateLimitError } from "./TextRecognizer";
-import { TextTranslator } from "./TextTranslator";
+import { TextTranslator, TranslatedRegion } from "./TextTranslator";
 import { Input, InputMode, ActionType, ProgressInfo } from "./Input";
 import { ImageState } from "./Overlay";
 import { logger } from "./Logger";
@@ -440,7 +440,27 @@ export class GameTranslatorLogic {
                     this.imageState.showImage(result.base64);
 
                     this.imageState.updateProcessingStep("Translating with Gemini");
-                    const visionResult = await this.textTranslator.visionTranslate(result.base64);
+
+                    // リトライ状態を 500ms ごとに polling し、処理ステップを更新する
+                    const retryPollInterval = setInterval(async () => {
+                        try {
+                            const status = await call<[], { attempt: number; max: number; delay: number; status: string } | null>('get_translation_status');
+                            if (status) {
+                                this.imageState.updateProcessingStep(
+                                    `Retrying after ${status.status} (${status.attempt}/${status.max})`
+                                );
+                            }
+                        } catch (err) {
+                            logger.debug('Translator', 'get_translation_status failed', err);
+                        }
+                    }, 500);
+
+                    let visionResult: TranslatedRegion[] | null;
+                    try {
+                        visionResult = await this.textTranslator.visionTranslate(result.base64);
+                    } finally {
+                        clearInterval(retryPollInterval);
+                    }
 
                     if (result.path) {
                         call('delete_screenshot', result.path).catch(() => {});

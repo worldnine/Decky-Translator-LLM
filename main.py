@@ -1739,6 +1739,13 @@ class Plugin:
             logger.error(traceback.format_exc())
             return {"error": "vision_failed", "message": str(e)}
 
+    async def get_translation_status(self):
+        """翻訳中のリトライ状態を返す（フロントのポーリング用）。
+        翻訳中でなければ None を返す。"""
+        if not self._provider_manager:
+            return None
+        return self._provider_manager.get_retry_status()
+
     # --- ピン機能 RPC ---
 
     async def pin_capture(self, app_id: int, game_name: str = "", image_data: str = None, trigger: str = "button"):
