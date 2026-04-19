@@ -8,8 +8,8 @@ import {
     Router
 } from "@decky/ui";
 
-import { VFC } from "react";
-import { BsTranslate, BsXLg } from "react-icons/bs";
+import { VFC, useState } from "react";
+import { BsTranslate, BsXLg, BsPin } from "react-icons/bs";
 import { useSettings } from "../SettingsContext";
 import { GameTranslatorLogic } from "../Translator";
 import { logger } from "../Logger";
@@ -49,6 +49,24 @@ interface TabMainProps {
 
 export const TabMain: VFC<TabMainProps> = ({ logic, overlayVisible }) => {
     const { settings, updateSetting } = useSettings();
+    const [pinning, setPinning] = useState(false);
+
+    const handlePinClick = () => {
+        if (pinning) return;
+        setPinning(true);
+
+        Router.CloseSideMenus();
+
+        // サイドメニューが閉じてからRPCを呼ぶ（translateボタンと同じパターン）
+        // ピン通知はトースターではなく Translator 側で左下スピナーにより表示される
+        setTimeout(async () => {
+            try {
+                await logic.pinCurrentScreen("button");
+            } finally {
+                setPinning(false);
+            }
+        }, 200);
+    };
 
     const handleButtonClick = () => {
         if (overlayVisible) {
@@ -94,6 +112,18 @@ export const TabMain: VFC<TabMainProps> = ({ logic, overlayVisible }) => {
                                 }
                             </ButtonItem>
                         </PanelSectionRow>
+
+                        {settings.advancedFeaturesEnabled && settings.pinFeatureEnabled && (
+                            <PanelSectionRow>
+                                <ButtonItem
+                                    bottomSeparator="standard"
+                                    layout="below"
+                                    disabled={pinning}
+                                    onClick={handlePinClick}>
+                                    <span><BsPin style={{marginRight: "8px"}} /> {pinning ? "Pinning..." : "Pin Current Screen"}</span>
+                                </ButtonItem>
+                            </PanelSectionRow>
+                        )}
 
                         <PanelSectionRow>
                             <div style={{ fontSize: '12px', marginTop: '8px' }}>

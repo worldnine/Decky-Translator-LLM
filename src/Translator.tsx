@@ -16,7 +16,8 @@ export interface ScreenshotResponse {
 
 // Main app logic
 export class GameTranslatorLogic {
-    private isProcessing = false;
+    // translate / pin の共有ロック（同時実行を禁止する）
+    private activeOperation: "translate" | "pin" | null = null;
     public imageState: ImageState;
     private textTranslator: TextTranslator;
     private shortcutInput: Input; // Added shortcut input handler
@@ -50,7 +51,10 @@ export class GameTranslatorLogic {
             // Only process inputs if the plugin is enabled
             if (!this.enabled) return;
 
-            if (actionType === ActionType.DISMISS) {
+            if (actionType === ActionType.PIN) {
+                // ピンアクション — ショートカット経由
+                this.pinCurrentScreen("shortcut").catch(err => logger.error('Translator', 'Pin shortcut failed', err));
+            } else if (actionType === ActionType.DISMISS) {
                 // Dismiss overlay action
                 if (this.imageState.isVisible()) {
                     this.imageState.hideImage();
@@ -304,10 +308,61 @@ export class GameTranslatorLogic {
         });
     }
 
+    pinCurrentScreen = async (trigger: string = "button"): Promise<void> => {
+        // 共有ロック: 翻訳中・ピン進行中は発火しない
+        if (this.activeOperation !== null) {
+            logger.warn('Translator', `Pin skipped: ${this.activeOperation} in progress`);
+            if (this.activeOperation === "translate") {
+                this.imageState.showPinError("Pin skipped: busy");
+            }
+            return;
+        }
+
+        const mainApp = Router.MainRunningApp;
+        const appId = mainApp?.appid ? Number(mainApp.appid) : 0;
+        const appName = mainApp?.display_name || "";
+
+        this.activeOperation = "pin";
+        // サスペンド等で resetPinState が走ったとき、遅延完了で UI を再点灯させないための世代トークン
+        const pinGen = this.imageState.getPinGeneration();
+        // トースター通知は使わず、左下スピナー（Overlay のピンレーン）で通知する
+        this.imageState.startPinLoading("Pinning");
+        try {
+            const result = await call<[number, string, string | null, string], any>(
+                'pin_capture', appId, appName, null, trigger
+            );
+
+            // 進行中に resetPinState が呼ばれたら UI 更新を破棄
+            if (this.imageState.getPinGeneration() !== pinGen) {
+                logger.debug('Translator', 'Pin result discarded: state was reset mid-flight');
+                return;
+            }
+
+            if (result?.ok && result?.pin_id) {
+                this.imageState.showPinSuccess("Pinned");
+                logger.info('Translator', `Pin saved: ${result.pin_id}`);
+            } else {
+                const reason = result?.error || (result?.ok ? "missing pin_id" : "Unknown error");
+                this.imageState.showPinError(`Pin failed: ${reason}`);
+                logger.error('Translator', `Pin failed: ${reason}`);
+            }
+        } catch (err) {
+            if (this.imageState.getPinGeneration() !== pinGen) {
+                logger.debug('Translator', 'Pin error discarded: state was reset mid-flight');
+                return;
+            }
+            const msg = err instanceof Error ? err.message : String(err);
+            this.imageState.showPinError(`Pin failed: ${msg}`);
+            logger.error('Translator', 'Pin failed', err);
+        } finally {
+            this.activeOperation = null;
+        }
+    }
+
     takeScreenshotAndTranslate = async (): Promise<void> => {
-        // If already processing or disabled, return
-        if (this.isProcessing || !this.enabled) {
-            logger.debug('Translator', 'Already processing a screenshot or plugin disabled, skipping');
+        // 共有ロック: 翻訳・ピンが進行中なら発火しない
+        if (this.activeOperation !== null || !this.enabled) {
+            logger.debug('Translator', `Translate skipped: ${this.activeOperation ?? 'plugin disabled'}`);
             return;
         }
 
@@ -345,14 +400,23 @@ export class GameTranslatorLogic {
         }
 
         try {
-            this.isProcessing = true;
+            this.activeOperation = "translate";
 
             const mainApp = Router.MainRunningApp;
             if (mainApp?.appid) {
                 try {
                     await call('ensure_game_vision_prompt_file', Number(mainApp.appid), mainApp.display_name || "");
+                    // Agent用: ゲーム情報をバックエンドにキャッシュ
+                    await call('agent_set_running_game', Number(mainApp.appid), mainApp.display_name || "");
                 } catch (e) {
                     logger.warn('Translator', 'Failed to apply Gemini prompt', e);
+                }
+            } else {
+                // ゲーム未起動時はキャッシュをクリアして古い情報が残らないようにする
+                try {
+                    await call('agent_set_running_game', null, null);
+                } catch (e) {
+                    // 無視: agent RPCが未対応の環境でも翻訳フローは継続
                 }
             }
 
@@ -447,7 +511,7 @@ export class GameTranslatorLogic {
             }
         }
         finally {
-            this.isProcessing = false;
+            this.activeOperation = null;
         }
     }
 
@@ -519,6 +583,30 @@ export class GameTranslatorLogic {
 
     setAllowLabelGrowth = (allow: boolean): void => {
         this.imageState.setAllowLabelGrowth(allow);
+    }
+
+    setPinFeatureEnabled = (enabled: boolean): void => {
+        if (this.shortcutInput) {
+            this.shortcutInput.setPinFeatureEnabled(enabled);
+        }
+    }
+
+    setPinShortcutEnabled = (enabled: boolean): void => {
+        if (this.shortcutInput) {
+            this.shortcutInput.setPinShortcutEnabled(enabled);
+        }
+    }
+
+    setPinInputMode = (mode: InputMode | null): void => {
+        if (this.shortcutInput) {
+            this.shortcutInput.setPinInputMode(mode);
+        }
+    }
+
+    setPinHoldTime = (ms: number): void => {
+        if (this.shortcutInput) {
+            this.shortcutInput.setPinHoldTime(ms);
+        }
     }
 
     setGeminiBaseUrl = (baseUrl: string): void => {

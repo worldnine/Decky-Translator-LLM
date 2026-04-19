@@ -13,6 +13,7 @@ Steam Deck 用の [Decky Loader](https://github.com/SteamDeckHomebrew/decky-load
 ## 特徴
 
 * スクリーンショットからの直接翻訳（OCR不要）
+* スクリーンショットをピンして後で確認（バックグラウンドで Gemini が解析）
 * カスタムプロンプト（共通 / ゲーム別）
 * OpenAI API 互換の任意のバックエンドに対応
 
@@ -56,6 +57,43 @@ Decky公式ストアには登録していません。手動インストールの
 
 * **共通プロンプト** — 全ゲームに適用。Prompts タブまたは SSH で `~/homebrew/settings/decky-translator-prompts/vision-common.txt` を編集
 * **ゲーム別プロンプト** — 特定ゲーム起動中のみ適用。`~/homebrew/settings/decky-translator-games/{app_id}/vision.txt` を編集
+
+## ピン
+
+気になる画面を保存して後で振り返る機能です。ピンしたスクリーンショットはローカルに保存され、バックグラウンドで Gemini により解析されて、認識テキスト・翻訳と共に Pins タブに表示されます。
+
+### ピンの取り方
+
+* **ピンボタン** — Main タブの `Pin current screen`
+* **ショートカット（任意）** — Advanced → Pin でボタン長押しショートカットを有効化（長押し時間は調整可）
+* **CLI** — `decky-agent-cli pin capture`（[AGENT-CLI.ja.md](AGENT-CLI.ja.md) 参照）
+
+### UI フィードバック
+
+UI からピンすると画面左下にインジケータが出ます。翻訳時と同じインジケータを流用しており、両フローの見た目を統一しています。
+
+| 状態 | 見た目 |
+| --- | --- |
+| キャプチャ・保存中 | 青いスピナー + `Pinning...` |
+| 保存完了 | 緑の `✓ Pinned`（1.2 秒） |
+| 失敗 | 赤い `⚠ Pin failed: <理由>`（2 秒） |
+
+翻訳とピンは同時に走りません — 先に開始したほうが優先され、もう一方はインジケータを曖昧にしないため拒否されます。
+
+### ピン履歴
+
+**Pins** タブ（または CLI）から保存済みピンの閲覧・検索・削除ができます。ピンは `~/.config/decky-translator-llm/pins/{app_id}/` に保存されます。
+
+## Agent CLI
+
+外部 AI やスクリプトから SSH 経由で Steam Deck の画面をキャプチャ・翻訳・説明できるオプション機能。
+
+* **デフォルト無効** — 設定 → Agent CLI で有効化
+* サブコマンド: `capture`, `translate`, `describe`, `game`, `prompt`, `capabilities`
+* 画面読み取り時にオーバーレイ通知（サムネイル / ドット / メッセージ）
+* 読み取り専用 — ゲーム操作やシステム変更は行いません
+
+詳細は [AGENT-CLI.ja.md](AGENT-CLI.ja.md) を参照（[English](AGENT-CLI.md)）。
 
 ## ライセンス
 

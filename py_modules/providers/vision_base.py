@@ -67,6 +67,27 @@ class VisionProvider(ABC):
         pass
 
     @abstractmethod
+    async def describe_screen(
+        self,
+        image_base64: str,
+        image_width: int,
+        image_height: int,
+        prompt: str = None,
+    ) -> dict:
+        """攻略支援向けの画面説明（構造化JSON）。
+
+        Args:
+            image_base64: フルスクリーンショットのBase64文字列
+            image_width: 画像の幅（ピクセル）
+            image_height: 画像の高さ（ピクセル）
+            prompt: ユーザーからの追加指示（任意）
+
+        Returns:
+            {"summary": str, "objectives": [...], "ui": [...], "notable_text": [...]}
+        """
+        pass
+
+    @abstractmethod
     async def preflight_check(self) -> tuple:
         """Vision + JSON構造化出力の対応を事前検証する。
 

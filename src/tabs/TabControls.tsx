@@ -7,12 +7,16 @@ import {
     ToggleField,
     SliderField,
     TextField,
-    Field
+    Field,
+    ButtonItem,
+    Router
 } from "@decky/ui";
 
-import { VFC } from "react";
+import { VFC, useState, useEffect, useCallback } from "react";
+import { call } from "@decky/api";
 import { useSettings } from "../SettingsContext";
 import { InputMode } from "../Input";
+import { logger } from "../Logger";
 
 // Input mode options for dropdown
 const inputModeOptions = [
@@ -43,6 +47,137 @@ const getInputModeButtons = (mode: string): string => {
         case 'TOUCHPAD_COMBO': return 'Left Pad + Right Pad';
         default: return mode;
     }
+};
+
+// ログ状態の型
+interface LogStatus {
+    translationCount: number;
+    translationSize: number;
+    pinCount: number;
+    pinSize: number;
+}
+
+const formatSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+// Logs セクションコンポーネント
+const LogsSection: VFC = () => {
+    const { settings, updateSetting } = useSettings();
+    const [logStatus, setLogStatus] = useState<LogStatus | null>(null);
+    const [deleting, setDeleting] = useState<string | null>(null);
+
+    const loadLogStatus = useCallback(async () => {
+        try {
+            const mainApp = Router.MainRunningApp;
+            const appId = mainApp?.appid ? Number(mainApp.appid) : 0;
+            if (!appId) { setLogStatus(null); return; }
+
+            const [transStatus, pinStatus] = await Promise.all([
+                call<[number], any>('get_translation_history_status', appId),
+                call<[number], any>('get_pin_history_status', appId),
+            ]);
+
+            setLogStatus({
+                translationCount: transStatus?.count ?? 0,
+                translationSize: transStatus?.size_bytes ?? 0,
+                pinCount: pinStatus?.count ?? 0,
+                pinSize: pinStatus?.total_size_bytes ?? 0,
+            });
+        } catch (err) {
+            logger.error('LogsSection', 'Failed to load log status', err);
+        }
+    }, []);
+
+    useEffect(() => { loadLogStatus(); }, []);
+
+    const handleDelete = async (type: "translation" | "pin") => {
+        const mainApp = Router.MainRunningApp;
+        const appId = mainApp?.appid ? Number(mainApp.appid) : 0;
+        if (!appId) return;
+
+        setDeleting(type);
+        try {
+            if (type === "translation") {
+                await call<[number], any>('delete_translation_history_for_game', appId);
+            } else {
+                await call<[number], any>('delete_pin_history_for_game', appId);
+            }
+            await loadLogStatus();
+        } catch (err) {
+            logger.error('LogsSection', `Failed to delete ${type} history`, err);
+        } finally {
+            setDeleting(null);
+        }
+    };
+
+    return (
+        <PanelSection title="Logs">
+            <PanelSectionRow>
+                <ToggleField
+                    label="Save Translation History"
+                    description="Automatically save translation results for each game"
+                    checked={settings.translationHistoryEnabledDefault ?? true}
+                    onChange={(value) => updateSetting('translationHistoryEnabledDefault', value, 'Translation History')}
+                />
+            </PanelSectionRow>
+
+            <PanelSectionRow>
+                <ToggleField
+                    label="Save Pin History"
+                    description="Automatically save pin records for each game"
+                    checked={settings.pinHistoryEnabledDefault ?? true}
+                    onChange={(value) => updateSetting('pinHistoryEnabledDefault', value, 'Pin History')}
+                />
+            </PanelSectionRow>
+
+            {logStatus && (
+                <PanelSectionRow>
+                    <Field focusable={false} childrenContainerWidth="max">
+                        <div style={{ fontSize: "11px", color: "#aaa", padding: "4px 0" }}>
+                            <div>Translation: {logStatus.translationCount} entries ({formatSize(logStatus.translationSize)})</div>
+                            <div>Pin: {logStatus.pinCount} entries ({formatSize(logStatus.pinSize)})</div>
+                        </div>
+                    </Field>
+                </PanelSectionRow>
+            )}
+
+            <PanelSectionRow>
+                <ButtonItem
+                    layout="below"
+                    onClick={loadLogStatus}
+                >
+                    Refresh Log Status
+                </ButtonItem>
+            </PanelSectionRow>
+
+            {logStatus && logStatus.translationCount > 0 && (
+                <PanelSectionRow>
+                    <ButtonItem
+                        layout="below"
+                        disabled={deleting === "translation"}
+                        onClick={() => handleDelete("translation")}
+                    >
+                        {deleting === "translation" ? "Deleting..." : "Delete Translation Logs"}
+                    </ButtonItem>
+                </PanelSectionRow>
+            )}
+
+            {logStatus && logStatus.pinCount > 0 && (
+                <PanelSectionRow>
+                    <ButtonItem
+                        layout="below"
+                        disabled={deleting === "pin"}
+                        onClick={() => handleDelete("pin")}
+                    >
+                        {deleting === "pin" ? "Deleting..." : "Delete Pin Logs"}
+                    </ButtonItem>
+                </PanelSectionRow>
+            )}
+        </PanelSection>
+    );
 };
 
 interface TabControlsProps {
@@ -228,6 +363,93 @@ export const TabControls: VFC<TabControlsProps> = ({ inputDiagnostics }) => {
                 </PanelSectionRow>
             </PanelSection>
 
+            <PanelSection title="Advanced">
+                <PanelSectionRow>
+                    <ToggleField
+                        label="Advanced Features"
+                        description="Show advanced settings: Agent CLI, Pin, Logs, Debug"
+                        checked={settings.advancedFeaturesEnabled ?? false}
+                        onChange={(value) => updateSetting('advancedFeaturesEnabled', value, 'Advanced Features')}
+                    />
+                </PanelSectionRow>
+            </PanelSection>
+
+            {settings.advancedFeaturesEnabled && (
+            <>
+            <PanelSection title="Agent CLI">
+                <PanelSectionRow>
+                    <ToggleField
+                        label="Agent CLI"
+                        description="Allow external AI/scripts to capture and analyze the screen via SSH"
+                        checked={settings.agentEnabled ?? false}
+                        onChange={(value) => updateSetting('agentEnabled', value, 'Agent CLI')}
+                    />
+                </PanelSectionRow>
+            </PanelSection>
+
+            <PanelSection title="Pin">
+                <PanelSectionRow>
+                    <ToggleField
+                        label="Enable Pin Feature"
+                        description="Save screenshots with Gemini analysis for later reference"
+                        checked={settings.pinFeatureEnabled ?? false}
+                        onChange={(value) => updateSetting('pinFeatureEnabled', value, 'Pin Feature')}
+                    />
+                </PanelSectionRow>
+
+                {settings.pinFeatureEnabled && (
+                <>
+                    <PanelSectionRow>
+                        <ToggleField
+                            label="Enable Pin Shortcut"
+                            description="Use a dedicated button shortcut to pin the current screen"
+                            checked={settings.pinShortcutEnabled ?? false}
+                            onChange={(value) => {
+                                updateSetting('pinShortcutEnabled', value, 'Pin Shortcut');
+                                // pinInputMode が未設定なら既定値を保存
+                                if (value && settings.pinInputMode == null) {
+                                    updateSetting('pinInputMode', InputMode.L4_BUTTON, 'Pin input mode');
+                                }
+                            }}
+                        />
+                    </PanelSectionRow>
+
+                    {settings.pinShortcutEnabled && (
+                    <>
+                        <PanelSectionRow>
+                            <DropdownItem
+                                label="Pin Shortcut"
+                                description="Select which buttons to hold to pin"
+                                rgOptions={inputModeOptions}
+                                selectedOption={settings.pinInputMode ?? InputMode.L4_BUTTON}
+                                onChange={(option) => updateSetting('pinInputMode', option.data, 'Pin input mode')}
+                            />
+                        </PanelSectionRow>
+
+                        <PanelSectionRow>
+                            <SliderField
+                                value={(settings.holdTimePin ?? 1000) / 1000}
+                                max={3}
+                                min={0}
+                                step={0.1}
+                                label="Hold Time to Pin"
+                                description="Seconds to hold button(s) to pin"
+                                showValue={true}
+                                valueSuffix="s"
+                                onChange={(value) => {
+                                    const milliseconds = Math.round(value * 1000);
+                                    updateSetting('holdTimePin', milliseconds, 'Hold time for pin');
+                                }}
+                            />
+                        </PanelSectionRow>
+                    </>
+                    )}
+                </>
+                )}
+            </PanelSection>
+
+            <LogsSection />
+
             <PanelSection title="Debug">
                 <PanelSectionRow>
                     <ToggleField
@@ -312,6 +534,8 @@ export const TabControls: VFC<TabControlsProps> = ({ inputDiagnostics }) => {
                     </PanelSectionRow>
                 )}
             </PanelSection>
+            </>
+            )}
         </div>
     );
 };

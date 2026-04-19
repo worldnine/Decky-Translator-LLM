@@ -309,6 +309,105 @@ class GeminiVisionProvider(VisionProvider):
         )
         return valid_regions, reported_coordinate_mode
 
+    # --- describe モード: 攻略支援向け画面説明 ---
+
+    async def describe_screen(
+        self,
+        image_base64: str,
+        image_width: int,
+        image_height: int,
+        prompt: str = None,
+    ) -> dict:
+        """ゲーム画面を攻略支援向けに構造化して説明する。
+
+        Returns:
+            {"summary": str, "objectives": [...], "ui": [...], "notable_text": [...]}
+        """
+        # 画面説明固定プロンプト
+        system_prompt = (
+            "You are a game screen analyzer for gameplay assistance. "
+            "You will receive a game screenshot. "
+            "Analyze the screen and return a structured JSON summary. "
+            "Do NOT guess or hallucinate — only report what is visibly present. "
+            "If something is unclear, say so. "
+            "Return JSON only, in Japanese."
+        )
+
+        # 共通/ゲーム別プロンプトを追加（翻訳経路と同じ設定を反映）
+        system_prompt += self._build_additional_prompt()
+
+        # ユーザー指定のカスタムプロンプトがあれば追加
+        if prompt:
+            system_prompt += f"\n\nAdditional user instructions:\n{prompt}"
+
+        if not image_base64.startswith("data:"):
+            image_base64 = f"data:image/png;base64,{image_base64}"
+
+        user_content = [
+            {"type": "image_url", "image_url": {"url": image_base64}},
+            {
+                "type": "text",
+                "text": (
+                    "Analyze this game screen for gameplay assistance. "
+                    "Return compact single-line JSON (no newlines, no indentation):\n"
+                    '{"summary":"画面の簡潔な要約",'
+                    '"objectives":["次の目的や目標"],'
+                    '"ui":["HP 100/200","MP 50/80"],'
+                    '"notable_text":["重要な会話やテキスト"]}\n'
+                    "Only include fields that have visible content. "
+                    "Empty arrays are fine for fields with no relevant content."
+                ),
+            },
+        ]
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+
+        logger.info(f"describe_screen: {image_width}x{image_height}")
+
+        describe_schema = {
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string"},
+                "objectives": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "ui": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "notable_text": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+            "required": ["summary"],
+        }
+
+        result = await asyncio.to_thread(
+            self._client.call, messages,
+            response_format={"type": "json_object", "schema": describe_schema},
+            max_tokens=4096,
+            timeout=60.0,
+        )
+        logger.info(f"describe_screen output ({len(result)} chars): {result[:300]!r}")
+
+        parsed = self._extract_json(result)
+
+        # 必須フィールドの正規化
+        if not isinstance(parsed, dict):
+            raise ValueError(f"describe_screen: 不正なレスポンス型: {type(parsed)}")
+
+        return {
+            "summary": str(parsed.get("summary", "")),
+            "objectives": [str(o) for o in parsed.get("objectives", []) if o],
+            "ui": [str(u) for u in parsed.get("ui", []) if u],
+            "notable_text": [str(t) for t in parsed.get("notable_text", []) if t],
+        }
+
     # --- preflight ---
     # 固定プロンプトのみ使用。共通/ゲーム別プロンプトは注入しない。
 
