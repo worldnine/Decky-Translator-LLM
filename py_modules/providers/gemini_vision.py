@@ -172,6 +172,7 @@ class GeminiVisionProvider(VisionProvider):
         image_width: int,
         image_height: int,
         on_retry=None,
+        disable_retry: bool = False,
     ) -> tuple:
         tgt_name = _get_language_name(target_lang)
         src_name = "the detected language" if source_lang == "auto" else _get_language_name(source_lang)
@@ -255,6 +256,7 @@ class GeminiVisionProvider(VisionProvider):
             max_tokens=8192,
             timeout=60.0,
             on_retry=on_retry,
+            disable_retry=disable_retry,
         )
         logger.info(f"Vision output ({len(result)} chars): {result[:500]!r}")
 

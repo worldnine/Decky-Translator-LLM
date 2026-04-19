@@ -1,8 +1,13 @@
 # tests/test_provider_manager_vision.py
 # ProviderManager のGemini Vision専用構成テスト
 
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from py_modules.providers import ProviderManager
+from py_modules.providers.base import NetworkError
+from py_modules.providers.circuit_breaker import CircuitBreaker
 
 
 class TestConfigureVision:
@@ -176,3 +181,120 @@ class TestPreflightVisionCheck:
         # base_url も model も未設定 → is_available() == False
         result = asyncio.get_event_loop().run_until_complete(pm.preflight_vision_check())
         assert result["ok"] is False
+
+
+def _build_pm_with_fallback(primary="gemini-primary", fallback="gemini-fallback"):
+    """フォールバックテスト用の ProviderManager + mocked VisionProvider を返す。"""
+    pm = ProviderManager()
+    pm.configure_vision(
+        mode="direct",
+        base_url="https://generativelanguage.googleapis.com/v1beta",
+        api_key="dummy",
+        model=primary,
+        fallback_model=fallback,
+    )
+
+    # VisionProvider をまるごとモック
+    fake_provider = MagicMock()
+    fake_provider.is_available = MagicMock(return_value=True)
+    fake_provider.configure = MagicMock()
+    fake_provider.direct_translate = AsyncMock()
+    pm._vision_provider = fake_provider
+    return pm, fake_provider
+
+
+class TestFallbackLoop:
+    """_translate_with_fallback / recognize_and_translate のテスト。"""
+
+    def test_Primary成功ならFallback呼ばない(self):
+        pm, fake = _build_pm_with_fallback()
+        fake.direct_translate.return_value = (
+            [{"text": "hi", "translated_text": "やあ", "rect": {"left": 0, "top": 0, "right": 10, "bottom": 10}}],
+            "pixel",
+        )
+        result = asyncio.get_event_loop().run_until_complete(
+            pm.recognize_and_translate(b"img", "en", "ja", 100, 100)
+        )
+        assert result is not None
+        assert fake.direct_translate.await_count == 1
+        # Primary model で設定された
+        assert fake.configure.call_args_list[0].kwargs["model"] == "gemini-primary"
+
+    def test_Primary_503_Fallback成功(self):
+        pm, fake = _build_pm_with_fallback()
+        fake.direct_translate.side_effect = [
+            NetworkError("Gemini API returned status 503"),
+            ([{"text": "hi", "translated_text": "やあ", "rect": {"left": 0, "top": 0, "right": 10, "bottom": 10}}], "pixel"),
+        ]
+        result = asyncio.get_event_loop().run_until_complete(
+            pm.recognize_and_translate(b"img", "en", "ja", 100, 100)
+        )
+        assert result is not None
+        assert fake.direct_translate.await_count == 2
+        # Primary → Fallback
+        models_used = [c.kwargs["model"] for c in fake.configure.call_args_list]
+        assert "gemini-primary" in models_used
+        assert "gemini-fallback" in models_used
+
+    def test_両方503でNetworkError(self):
+        pm, fake = _build_pm_with_fallback()
+        fake.direct_translate.side_effect = NetworkError("Gemini API returned status 503")
+        with pytest.raises(NetworkError):
+            asyncio.get_event_loop().run_until_complete(
+                pm.recognize_and_translate(b"img", "en", "ja", 100, 100)
+            )
+        assert fake.direct_translate.await_count == 2
+
+    def test_Fallback未設定で503ならNetworkError(self):
+        pm, fake = _build_pm_with_fallback(fallback="")  # Fallback 無し
+        fake.direct_translate.side_effect = NetworkError("Gemini API returned status 503")
+        with pytest.raises(NetworkError):
+            asyncio.get_event_loop().run_until_complete(
+                pm.recognize_and_translate(b"img", "en", "ja", 100, 100)
+            )
+        # Primary のみで試行終了
+        assert fake.direct_translate.await_count == 1
+
+    def test_Circuit_OPEN中はPrimaryスキップ(self):
+        pm, fake = _build_pm_with_fallback()
+        # サーキットを強制的に OPEN に
+        pm._circuit = CircuitBreaker(threshold=1, window_sec=300, open_sec=300)
+        pm._circuit.record_failure()
+        assert pm._circuit.get_state() == "open"
+
+        fake.direct_translate.return_value = (
+            [{"text": "hi", "translated_text": "やあ", "rect": {"left": 0, "top": 0, "right": 10, "bottom": 10}}],
+            "pixel",
+        )
+        result = asyncio.get_event_loop().run_until_complete(
+            pm.recognize_and_translate(b"img", "en", "ja", 100, 100)
+        )
+        assert result is not None
+        # Primary は呼ばれず Fallback のみ
+        assert fake.direct_translate.await_count == 1
+        assert fake.configure.call_args_list[0].kwargs["model"] == "gemini-fallback"
+
+    def test_Primary_503_3回でCircuitがOPEN(self):
+        pm, fake = _build_pm_with_fallback()
+        # Fallback も失敗にしておく（Primary の失敗カウントが記録されるか確認）
+        fake.direct_translate.side_effect = NetworkError("Gemini API returned status 503")
+
+        for _ in range(3):
+            with pytest.raises(NetworkError):
+                asyncio.get_event_loop().run_until_complete(
+                    pm.recognize_and_translate(b"img", "en", "ja", 100, 100)
+                )
+
+        # 3回の Primary 失敗で OPEN に遷移
+        assert pm._circuit.get_state() == "open"
+
+    def test_ApiKeyErrorはFallbackしない(self):
+        from py_modules.providers.base import ApiKeyError
+        pm, fake = _build_pm_with_fallback()
+        fake.direct_translate.side_effect = ApiKeyError("invalid")
+        with pytest.raises(ApiKeyError):
+            asyncio.get_event_loop().run_until_complete(
+                pm.recognize_and_translate(b"img", "en", "ja", 100, 100)
+            )
+        # Primary だけで終了
+        assert fake.direct_translate.await_count == 1

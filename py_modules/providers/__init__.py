@@ -11,6 +11,7 @@ from .base import (
     RateLimitError,
     ConfigurationError,
 )
+from .circuit_breaker import CircuitBreaker
 from .vision_base import VisionProvider
 from .gemini_vision import GeminiVisionProvider
 
@@ -39,6 +40,8 @@ class ProviderManager:
         self._gemini_base_url = ""
         self._gemini_api_key = ""
         self._gemini_model = ""
+        # Primary が 503 等で失敗した場合の切替先（空文字列ならフォールバック無し）
+        self._gemini_fallback_model = ""
         self._gemini_disable_thinking = True
         self._gemini_parallel = True
         self._gemini_system_prompt = ""
@@ -48,15 +51,36 @@ class ProviderManager:
         self._vision_mode = "direct"
         self._vision_coordinate_mode = "pixel"
 
-        # 翻訳中のリトライ状態（フロントのポーリング用）
+        # 翻訳中のリトライ/フォールバック状態（フロントのポーリング用）
         # recognize_and_translate 実行中のみセットされ、終了時にクリアされる
+        # 形式: {event: "translating"|"retry"|"fallback", model, attempt?, max?, delay?, status?}
         self._retry_status: Optional[dict] = None
+        # 現在試行中のモデル名（コールバックから参照する）
+        self._current_model: str = ""
+
+        # Primary モデル用のサーキットブレーカー
+        # 5分以内に3回 server_busy で OPEN、5分後 HALF_OPEN
+        self._circuit = CircuitBreaker(
+            threshold=3, window_sec=300.0, open_sec=300.0,
+        )
 
         logger.debug("ProviderManager initialized")
 
     def _record_retry(self, info: dict) -> None:
-        """LlmApiClient からリトライ発生時に呼ばれるコールバック。"""
-        self._retry_status = info
+        """LlmApiClient からリトライ発生時に呼ばれるコールバック。
+        info: {attempt, max, delay, status} を含む。現在モデル名を上乗せして保存。"""
+        self._retry_status = {
+            **info,
+            "event": "retry",
+            "model": self._current_model,
+        }
+
+    def _record_translating(self, model: str) -> None:
+        self._current_model = model
+        self._retry_status = {"event": "translating", "model": model}
+
+    def _record_fallback(self, next_model: str) -> None:
+        self._retry_status = {"event": "fallback", "model": next_model}
 
     def get_retry_status(self) -> Optional[dict]:
         """現在のリトライ状態を返す。翻訳中でなければ None。"""
@@ -68,6 +92,7 @@ class ProviderManager:
         base_url: str = None,
         api_key: str = None,
         model: str = None,
+        fallback_model: str = None,
         disable_thinking: bool = None,
         parallel: bool = None,
         system_prompt: str = None,
@@ -83,6 +108,8 @@ class ProviderManager:
             self._gemini_api_key = api_key
         if model is not None:
             self._gemini_model = model
+        if fallback_model is not None:
+            self._gemini_fallback_model = fallback_model
         if disable_thinking is not None:
             self._gemini_disable_thinking = disable_thinking
         if parallel is not None:
@@ -182,6 +209,92 @@ class ProviderManager:
             "bottom": max(0, min(int(b), original_h)),
         }
 
+    def _is_server_busy_error(self, exc: Exception) -> bool:
+        """NetworkError のメッセージが 5xx 系サーバー過負荷を示すか判定。
+        サーキットブレーカーのカウント対象を限定するため。"""
+        if not isinstance(exc, NetworkError):
+            return False
+        msg = str(exc)
+        # "Gemini API returned status 503" / "status 502" / "status 500" / "status 504"
+        return any(f"status {code}" in msg for code in ("500", "502", "503", "504"))
+
+    async def _translate_with_fallback(
+        self,
+        vision_provider: GeminiVisionProvider,
+        image_b64: str,
+        source_lang: str,
+        target_lang: str,
+        image_width: int,
+        image_height: int,
+    ) -> tuple:
+        """Primary → Fallback の順に翻訳を試行する。
+
+        サーキット状態:
+          - CLOSED: Primary は短リトライ1回あり、失敗したら Fallback
+          - HALF_OPEN: Primary は disable_retry=True で1回だけ、失敗したら Fallback
+          - OPEN: Primary スキップ、Fallback から開始
+        """
+        circuit_state = self._circuit.allow()
+
+        # 試行順を決定: (model, is_primary, disable_retry)
+        attempts: list[tuple[str, bool, bool]] = []
+        if circuit_state != CircuitBreaker.STATE_OPEN:
+            attempts.append((
+                self._gemini_model,
+                True,
+                circuit_state == CircuitBreaker.STATE_HALF_OPEN,
+            ))
+        else:
+            logger.info(
+                f"Circuit OPEN、Primary({self._gemini_model})スキップ、Fallbackから開始"
+            )
+        if self._gemini_fallback_model and self._gemini_fallback_model != self._gemini_model:
+            attempts.append((self._gemini_fallback_model, False, True))
+
+        if not attempts:
+            # Primary が OPEN でかつ Fallback 未設定 → これは設定ミス
+            raise NetworkError(
+                "Primary モデルがサーキット OPEN かつ Fallback モデル未設定"
+            )
+
+        last_exc: Optional[Exception] = None
+        for i, (model, is_primary, disable_retry) in enumerate(attempts):
+            # VisionProvider のモデルを差し替え
+            vision_provider.configure(model=model)
+            self._record_translating(model)
+            try:
+                result = await vision_provider.direct_translate(
+                    image_b64, source_lang, target_lang,
+                    image_width, image_height,
+                    on_retry=self._record_retry,
+                    disable_retry=disable_retry,
+                )
+                if is_primary:
+                    self._circuit.record_success()
+                return result
+            except (NetworkError, RateLimitError) as e:
+                last_exc = e
+                if is_primary and self._is_server_busy_error(e):
+                    self._circuit.record_failure()
+                # まだ次の試行があれば fallback に切り替え
+                is_last = (i == len(attempts) - 1)
+                if not is_last:
+                    next_model = attempts[i + 1][0]
+                    logger.warning(
+                        f"{model} で失敗({type(e).__name__}): {e}。"
+                        f"{next_model} にフォールバック"
+                    )
+                    self._record_fallback(next_model)
+                    continue
+                # 最後のモデルも失敗
+                raise
+            except (ApiKeyError, ConfigurationError):
+                # 認証・設定エラーはフォールバックしても解決しない
+                raise
+
+        # ここに到達するのは全試行失敗時のみ（raise で抜けていない稀なパス）
+        raise last_exc or NetworkError("翻訳に失敗しました")
+
     async def recognize_and_translate(
         self,
         image_bytes: bytes,
@@ -201,10 +314,9 @@ class ProviderManager:
         # リトライ状態を初期化（前回の残骸をクリア）
         self._retry_status = None
         try:
-            raw_regions, reported_mode = await vision_provider.direct_translate(
-                image_b64, source_lang, target_lang,
+            raw_regions, reported_mode = await self._translate_with_fallback(
+                vision_provider, image_b64, source_lang, target_lang,
                 image_width, image_height,
-                on_retry=self._record_retry,
             )
         except (NetworkError, ApiKeyError, RateLimitError, ConfigurationError) as e:
             # フロントのエラーハンドリング（vision_translate RPC）に委ねる
@@ -216,6 +328,9 @@ class ProviderManager:
         finally:
             # 翻訳終了時にリトライ状態をクリア（ポーリング側が None を受け取れるように）
             self._retry_status = None
+            # Primary モデルに念のため戻しておく（次回呼び出し時のため）
+            if self._gemini_model:
+                vision_provider.configure(model=self._gemini_model)
 
         # coordinate_modeの判定: LLMの自己申告を優先、未申告時は既存設定を維持
         if reported_mode and "pixel" in str(reported_mode).lower():
