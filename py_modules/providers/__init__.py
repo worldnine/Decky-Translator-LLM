@@ -29,6 +29,13 @@ __all__ = [
 ]
 
 
+# Primary モデル（preview系）の応答遅延を早めに見切って Fallback に切替
+# 実機ログで「Primary が 53秒かけて 200 を返す」ケースがあり体感悪化していた
+_PRIMARY_TIMEOUT_SEC = 15.0
+# Fallback は応答の信頼性を優先して長めに取る
+_FALLBACK_TIMEOUT_SEC = 60.0
+
+
 class ProviderManager:
     """Gemini Vision専用のプロバイダーマネージャー。
     翻訳の正式経路は vision_translate（recognize_and_translate）のみ。"""
@@ -210,13 +217,23 @@ class ProviderManager:
         }
 
     def _is_server_busy_error(self, exc: Exception) -> bool:
-        """NetworkError のメッセージが 5xx 系サーバー過負荷を示すか判定。
-        サーキットブレーカーのカウント対象を限定するため。"""
+        """Primary の「実質的な混雑シグナル」を識別する。
+        サーキットブレーカーのカウント対象を限定するため。
+
+        対象:
+        - 5xx 系 NetworkError: "Gemini API returned status 503" 等
+        - Timeout 由来 NetworkError: "Geminiサーバーがタイムアウトしました"
+          （Primary が遅延して応答を返さない状態もサーバー側過負荷の兆候）
+        """
         if not isinstance(exc, NetworkError):
             return False
         msg = str(exc)
-        # "Gemini API returned status 503" / "status 502" / "status 500" / "status 504"
-        return any(f"status {code}" in msg for code in ("500", "502", "503", "504"))
+        if any(f"status {code}" in msg for code in ("500", "502", "503", "504")):
+            return True
+        # Timeout メッセージのマッチ（日本語・英語両対応）
+        if "タイムアウト" in msg or "timeout" in msg.lower():
+            return True
+        return False
 
     async def _translate_with_fallback(
         self,
@@ -229,27 +246,33 @@ class ProviderManager:
     ) -> tuple:
         """Primary → Fallback の順に翻訳を試行する。
 
+        各モデルはリトライなし（disable_retry=True）。
+        Primary は短い timeout で「遅延応答」を早めに見切って Fallback へ切替。
+
         サーキット状態:
-          - CLOSED: Primary は短リトライ1回あり、失敗したら Fallback
-          - HALF_OPEN: Primary は disable_retry=True で1回だけ、失敗したら Fallback
+          - CLOSED / HALF_OPEN: Primary（短 timeout）→ 失敗なら Fallback
           - OPEN: Primary スキップ、Fallback から開始
         """
         circuit_state = self._circuit.allow()
 
-        # 試行順を決定: (model, is_primary, disable_retry)
-        attempts: list[tuple[str, bool, bool]] = []
+        # 試行順を決定: (model, is_primary, timeout)
+        attempts: list[tuple[str, bool, float]] = []
         if circuit_state != CircuitBreaker.STATE_OPEN:
             attempts.append((
                 self._gemini_model,
                 True,
-                circuit_state == CircuitBreaker.STATE_HALF_OPEN,
+                _PRIMARY_TIMEOUT_SEC,
             ))
         else:
             logger.info(
                 f"Circuit OPEN、Primary({self._gemini_model})スキップ、Fallbackから開始"
             )
         if self._gemini_fallback_model and self._gemini_fallback_model != self._gemini_model:
-            attempts.append((self._gemini_fallback_model, False, True))
+            attempts.append((
+                self._gemini_fallback_model,
+                False,
+                _FALLBACK_TIMEOUT_SEC,
+            ))
 
         if not attempts:
             # Primary が OPEN でかつ Fallback 未設定 → これは設定ミス
@@ -258,7 +281,7 @@ class ProviderManager:
             )
 
         last_exc: Optional[Exception] = None
-        for i, (model, is_primary, disable_retry) in enumerate(attempts):
+        for i, (model, is_primary, timeout) in enumerate(attempts):
             # VisionProvider のモデルを差し替え
             vision_provider.configure(model=model)
             self._record_translating(model)
@@ -267,7 +290,8 @@ class ProviderManager:
                     image_b64, source_lang, target_lang,
                     image_width, image_height,
                     on_retry=self._record_retry,
-                    disable_retry=disable_retry,
+                    disable_retry=True,
+                    timeout=timeout,
                 )
                 if is_primary:
                     self._circuit.record_success()

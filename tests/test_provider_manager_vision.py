@@ -298,3 +298,49 @@ class TestFallbackLoop:
             )
         # Primary だけで終了
         assert fake.direct_translate.await_count == 1
+
+    def test_Primary_Timeout_Fallback成功(self):
+        """Primary が Timeout 由来 NetworkError を投げたら Fallback に切り替える。
+        Timeout もサーキットカウント対象なので failure が増える。"""
+        pm, fake = _build_pm_with_fallback()
+        fake.direct_translate.side_effect = [
+            NetworkError("Geminiサーバーがタイムアウトしました"),
+            ([{"text": "hi", "translated_text": "やあ", "rect": {"left": 0, "top": 0, "right": 10, "bottom": 10}}], "pixel"),
+        ]
+        result = asyncio.get_event_loop().run_until_complete(
+            pm.recognize_and_translate(b"img", "en", "ja", 100, 100)
+        )
+        assert result is not None
+        assert fake.direct_translate.await_count == 2
+        # Timeout もサーキット対象
+        assert len(pm._circuit._failures) == 1
+
+    def test_Primary_Timeout_3回でCircuitがOPEN(self):
+        pm, fake = _build_pm_with_fallback()
+        # Primary と Fallback 両方で失敗（Primary の Timeout がカウントされる）
+        fake.direct_translate.side_effect = NetworkError(
+            "Geminiサーバーがタイムアウトしました"
+        )
+        for _ in range(3):
+            with pytest.raises(NetworkError):
+                asyncio.get_event_loop().run_until_complete(
+                    pm.recognize_and_translate(b"img", "en", "ja", 100, 100)
+                )
+        assert pm._circuit.get_state() == "open"
+
+    def test_PrimaryとFallbackのtimeout値が異なる(self):
+        """Primary=15s / Fallback=60s が direct_translate に渡されているか。"""
+        pm, fake = _build_pm_with_fallback()
+        fake.direct_translate.side_effect = [
+            NetworkError("Gemini API returned status 503"),
+            ([{"text": "hi", "translated_text": "やあ", "rect": {"left": 0, "top": 0, "right": 10, "bottom": 10}}], "pixel"),
+        ]
+        asyncio.get_event_loop().run_until_complete(
+            pm.recognize_and_translate(b"img", "en", "ja", 100, 100)
+        )
+        # 1回目呼び出し: Primary (15s)
+        first_call = fake.direct_translate.await_args_list[0]
+        assert first_call.kwargs["timeout"] == 15.0
+        # 2回目呼び出し: Fallback (60s)
+        second_call = fake.direct_translate.await_args_list[1]
+        assert second_call.kwargs["timeout"] == 60.0
