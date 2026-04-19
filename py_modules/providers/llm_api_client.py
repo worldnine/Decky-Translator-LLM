@@ -22,8 +22,10 @@ _RETRY_DELAYS_TRANSIENT = (2.0, 5.0, 10.0)
 _SERVER_BUSY_STATUS = frozenset({500, 502, 503, 504})
 _RATE_LIMIT_STATUS = 429
 _JITTER_RATIO = 0.3
-# リトライ全体の累積予算（秒）。このを超えそうならリトライ打ち切り
-_TOTAL_RETRY_BUDGET_SEC = 90.0
+# リトライ全体の累積予算（秒）。この時間を超えそうならリトライ打ち切り。
+# 実機ログで「長期混雑」時は何回リトライしても救えない一方、単発503の回復は
+# 10秒程度で起きるため、短めに設定してUX悪化を防ぐ。
+_TOTAL_RETRY_BUDGET_SEC = 60.0
 
 
 def _apply_jitter(delay: float) -> float:
