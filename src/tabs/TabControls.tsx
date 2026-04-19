@@ -202,6 +202,17 @@ export const TabControls: VFC<TabControlsProps> = ({ inputDiagnostics }) => {
                 </PanelSectionRow>
 
                 <PanelSectionRow>
+                    <Field label="Fallback Model" childrenContainerWidth="max">
+                        <TextField
+                            value={settings.geminiFallbackModel}
+                            onChange={(e) => updateSetting('geminiFallbackModel', e.target.value, 'Gemini Fallback Model')}
+                            bShowClearAction={true}
+                            description="Used when primary returns 503. Leave blank to disable. e.g. gemini-2.5-flash-lite"
+                        />
+                    </Field>
+                </PanelSectionRow>
+
+                <PanelSectionRow>
                     <Field label="API Key" childrenContainerWidth="max">
                         <TextField
                             value={settings.geminiApiKey}

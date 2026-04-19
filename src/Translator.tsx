@@ -439,15 +439,33 @@ export class GameTranslatorLogic {
                     // Immediately show the new screenshot on the overlay
                     this.imageState.showImage(result.base64);
 
-                    this.imageState.updateProcessingStep("Translating with Gemini");
+                    const primaryModel = this.geminiModel || "Gemini";
+                    this.imageState.updateProcessingStep(`Translating with ${primaryModel}`);
 
-                    // リトライ状態を 500ms ごとに polling し、処理ステップを更新する
+                    // リトライ/フォールバック状態を 500ms ごとに polling し処理ステップを更新する
+                    type TranslationStatus = {
+                        event: "translating" | "retry" | "fallback";
+                        model: string;
+                        attempt?: number;
+                        max?: number;
+                        delay?: number;
+                        status?: string;
+                    };
                     const retryPollInterval = setInterval(async () => {
                         try {
-                            const status = await call<[], { attempt: number; max: number; delay: number; status: string } | null>('get_translation_status');
-                            if (status) {
+                            const status = await call<[], TranslationStatus | null>('get_translation_status');
+                            if (!status) return;
+                            if (status.event === "retry") {
                                 this.imageState.updateProcessingStep(
-                                    `Retrying after ${status.status} (${status.attempt}/${status.max})`
+                                    `Retrying ${status.model} (${status.attempt}/${status.max})`
+                                );
+                            } else if (status.event === "fallback") {
+                                this.imageState.updateProcessingStep(
+                                    `Switching to ${status.model}...`
+                                );
+                            } else {
+                                this.imageState.updateProcessingStep(
+                                    `Translating with ${status.model}`
                                 );
                             }
                         } catch (err) {
