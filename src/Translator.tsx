@@ -308,24 +308,39 @@ export class GameTranslatorLogic {
     }
 
     pinCurrentScreen = async (trigger: string = "button"): Promise<void> => {
-        try {
-            const mainApp = Router.MainRunningApp;
-            const appId = mainApp?.appid ? Number(mainApp.appid) : 0;
-            const appName = mainApp?.display_name || "";
+        // 排他: 翻訳中・ピン進行中は発火しない（左下スピナーの表示位置が重なるため）
+        if (this.imageState.isLoading()) {
+            logger.warn('Translator', 'Pin skipped: translation in progress');
+            this.imageState.showPinError("Pin skipped: busy");
+            return;
+        }
+        if (this.imageState.getPinStatus() === "loading") {
+            logger.warn('Translator', 'Pin skipped: already pinning');
+            return;
+        }
 
+        const mainApp = Router.MainRunningApp;
+        const appId = mainApp?.appid ? Number(mainApp.appid) : 0;
+        const appName = mainApp?.display_name || "";
+
+        // トースター通知は使わず、左下スピナー（Overlay のピンレーン）で通知する
+        this.imageState.startPinLoading("Pinning");
+        try {
             const result = await call<[number, string, string | null, string], any>(
                 'pin_capture', appId, appName, null, trigger
             );
 
-            if (result?.ok) {
-                this.notify("Pinned current screen", 1500);
+            if (result?.ok && result?.pin_id) {
+                this.imageState.stopPinLoading();
                 logger.info('Translator', `Pin saved: ${result.pin_id}`);
             } else {
-                this.notify("Pin failed", 2000, result?.error || "Unknown error");
-                logger.error('Translator', `Pin failed: ${result?.error}`);
+                const reason = result?.error || (result?.ok ? "missing pin_id" : "Unknown error");
+                this.imageState.showPinError(`Pin failed: ${reason}`);
+                logger.error('Translator', `Pin failed: ${reason}`);
             }
         } catch (err) {
-            this.notify("Pin failed", 2000);
+            const msg = err instanceof Error ? err.message : String(err);
+            this.imageState.showPinError(`Pin failed: ${msg}`);
             logger.error('Translator', 'Pin failed', err);
         }
     }

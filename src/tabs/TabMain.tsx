@@ -10,7 +10,6 @@ import {
 
 import { VFC, useState } from "react";
 import { BsTranslate, BsXLg, BsPin } from "react-icons/bs";
-import { call } from "@decky/api";
 import { useSettings } from "../SettingsContext";
 import { GameTranslatorLogic } from "../Translator";
 import { logger } from "../Logger";
@@ -56,33 +55,13 @@ export const TabMain: VFC<TabMainProps> = ({ logic, overlayVisible }) => {
         if (pinning) return;
         setPinning(true);
 
-        const mainApp = Router.MainRunningApp;
-        const appId = mainApp?.appid ? Number(mainApp.appid) : 0;
-        const appName = mainApp?.display_name || "";
-
         Router.CloseSideMenus();
 
         // サイドメニューが閉じてからRPCを呼ぶ（translateボタンと同じパターン）
+        // ピン通知はトースターではなく Translator 側で左下スピナーにより表示される
         setTimeout(async () => {
             try {
-                const result = await call<[number, string, string | null, string], any>(
-                    'pin_capture',
-                    appId,
-                    appName,
-                    null,
-                    "button"
-                );
-
-                if (result?.ok) {
-                    logic.notify("Pinned current screen", 1500);
-                    logger.info('TabMain', `Pin saved: ${result.pin_id}`);
-                } else {
-                    logic.notify("Pin failed", 2000, result?.error || "Unknown error");
-                    logger.error('TabMain', `Pin failed: ${result?.error}`);
-                }
-            } catch (err: any) {
-                logic.notify("Pin failed", 2000, String(err));
-                logger.error('TabMain', 'Pin failed', err);
+                await logic.pinCurrentScreen("button");
             } finally {
                 setPinning(false);
             }

@@ -33,6 +33,9 @@ const useUIComposition: (composition: UIComposition) => void = findModuleChild(
     }
 );
 
+// ピン操作用インジケータの状態
+export type PinStatus = "idle" | "loading" | "error";
+
 // Enhanced ImageState to handle translated text regions
 export class ImageState {
     private visible = false;
@@ -45,6 +48,12 @@ export class ImageState {
     private fontScale = 1.0;
     private allowLabelGrowth = false;
     private onStateChangedListeners: Array<(visible: boolean, imageData: string, regions: TranslatedRegion[], loading: boolean, processingStep: string, translationsVisible: boolean, fontScale: number, allowLabelGrowth: boolean) => void> = [];
+
+    // ピン操作用の独立 state レーン（翻訳レーンと干渉させない）
+    private pinStatus: PinStatus = "idle";
+    private pinLabel = "";
+    private pinErrorTimer: ReturnType<typeof setTimeout> | null = null;
+    private onPinStateChangedListeners: Array<(status: PinStatus, label: string) => void> = [];
 
     onStateChanged(callback: (visible: boolean, imageData: string, regions: TranslatedRegion[], loading: boolean, processingStep: string, translationsVisible: boolean, fontScale: number, allowLabelGrowth: boolean) => void): void {
         this.onStateChangedListeners.push(callback);
@@ -210,6 +219,81 @@ export class ImageState {
     getCurrentStep(): string {
         return this.processingStep;
     }
+
+    // ---- ピン操作用インジケータ（翻訳 state とは独立レーン） ----
+
+    onPinStateChanged(callback: (status: PinStatus, label: string) => void): void {
+        this.onPinStateChangedListeners.push(callback);
+    }
+
+    offPinStateChanged(callback: (status: PinStatus, label: string) => void): void {
+        const index = this.onPinStateChangedListeners.indexOf(callback);
+        if (index !== -1) {
+            this.onPinStateChangedListeners.splice(index, 1);
+        }
+    }
+
+    private notifyPinListeners(): void {
+        for (const cb of this.onPinStateChangedListeners) {
+            cb(this.pinStatus, this.pinLabel);
+        }
+    }
+
+    // ピン開始: スピナーを回し始める
+    startPinLoading(label: string = "Pinning"): void {
+        if (this.pinErrorTimer) {
+            clearTimeout(this.pinErrorTimer);
+            this.pinErrorTimer = null;
+        }
+        this.pinStatus = "loading";
+        this.pinLabel = label;
+        this.notifyPinListeners();
+    }
+
+    // ピン成功: スピナーを即消す（error 表示中は上書きしない）
+    stopPinLoading(): void {
+        if (this.pinStatus === "error") return;
+        this.pinStatus = "idle";
+        this.pinLabel = "";
+        this.notifyPinListeners();
+    }
+
+    // ピン失敗: 赤いエラー表示に切り替え、duration ミリ秒後に自動で消す
+    showPinError(label: string = "Pin failed", duration: number = 2000): void {
+        if (this.pinErrorTimer) {
+            clearTimeout(this.pinErrorTimer);
+            this.pinErrorTimer = null;
+        }
+        this.pinStatus = "error";
+        this.pinLabel = label;
+        this.notifyPinListeners();
+        this.pinErrorTimer = setTimeout(() => {
+            this.pinStatus = "idle";
+            this.pinLabel = "";
+            this.pinErrorTimer = null;
+            this.notifyPinListeners();
+        }, duration);
+    }
+
+    getPinStatus(): PinStatus {
+        return this.pinStatus;
+    }
+
+    getPinLabel(): string {
+        return this.pinLabel;
+    }
+
+    // ピンレーンを完全リセット（サスペンド・アンマウント時のクリーンアップ用）
+    resetPinState(): void {
+        if (this.pinErrorTimer) {
+            clearTimeout(this.pinErrorTimer);
+            this.pinErrorTimer = null;
+        }
+        const needNotify = this.pinStatus !== "idle" || this.pinLabel !== "";
+        this.pinStatus = "idle";
+        this.pinLabel = "";
+        if (needNotify) this.notifyPinListeners();
+    }
 }
 
 // Area-based font sizing: picks a font size so the text fills the region
@@ -253,8 +337,10 @@ export const TranslatedTextOverlay: VFC<{
     processingStep: string,
     translationsVisible: boolean,
     fontScale: number,
-    allowLabelGrowth: boolean
-}> = ({ visible, imageData, regions, loading, processingStep, translationsVisible, fontScale, allowLabelGrowth }) => {
+    allowLabelGrowth: boolean,
+    pinStatus: PinStatus,
+    pinLabel: string
+}> = ({ visible, imageData, regions, loading, processingStep, translationsVisible, fontScale, allowLabelGrowth, pinStatus, pinLabel }) => {
     // Use the UI composition system - always active to prevent Steam UI flash
     useUIComposition(UIComposition.Notification);
 
@@ -345,7 +431,11 @@ export const TranslatedTextOverlay: VFC<{
         };
     }
 
+    const pinVisible = pinStatus !== "idle";
+    const pinIsError = pinStatus === "error";
+
     return (
+        <>
         <div id='translation-overlay'
              style={{
                  height: "100vh",
@@ -542,6 +632,64 @@ export const TranslatedTextOverlay: VFC<{
                 </div>
             )}
         </div>
+
+        {/* ピン操作用インジケータ（翻訳レーンとは独立） */}
+        <div id='pin-indicator-overlay'
+             style={{
+                 position: "fixed",
+                 bottom: "20px",
+                 left: "20px",
+                 zIndex: 7004,
+                 display: pinVisible ? "flex" : "none",
+                 flexDirection: "row",
+                 alignItems: "center",
+                 color: "#ffffff",
+                 background: pinIsError ? "rgba(244, 67, 54, 0.85)" : "rgba(0, 0, 0, 0.7)",
+                 padding: "8px 12px",
+                 borderRadius: "20px",
+                 maxWidth: "300px",
+                 boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+                 pointerEvents: "none",
+             }}>
+            {/* 翻訳未実行時（imageData 空）は翻訳側の <style> がマウントされないため、
+                ピン単独でも spin が回るよう keyframes をここでも注入する */}
+            <style>{`
+                @keyframes spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+            `}</style>
+            {pinIsError ? (
+                <div style={{
+                    width: "16px",
+                    height: "16px",
+                    marginRight: "10px",
+                    fontSize: "14px",
+                    lineHeight: "16px",
+                    textAlign: "center",
+                }}>⚠</div>
+            ) : (
+                <div className="loader" style={{
+                    border: "3px solid #f3f3f3",
+                    borderTop: "3px solid #3498db",
+                    borderRadius: "50%",
+                    width: "16px",
+                    height: "16px",
+                    animation: "spin 1.5s linear infinite",
+                    marginRight: "10px",
+                }}></div>
+            )}
+            <div style={{
+                fontSize: "14px",
+                whiteSpace: "normal",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                wordBreak: "break-word",
+            }}>
+                {pinIsError ? pinLabel : `${pinLabel}...`}
+            </div>
+        </div>
+        </>
     );
 };
 
@@ -557,6 +705,8 @@ export const ImageOverlay: VFC<{ state: ImageState }> = ({ state }) => {
     const [translationsVisible, setTranslationsVisible] = useState<boolean>(true);
     const [fontScale, setFontScale] = useState<number>(1.0);
     const [allowLabelGrowth, setAllowLabelGrowth] = useState<boolean>(false);
+    const [pinStatus, setPinStatus] = useState<PinStatus>("idle");
+    const [pinLabel, setPinLabel] = useState<string>("");
 
     useEffect(() => {
         logger.debug('ImageOverlay', 'useEffect mounting, registering state listener');
@@ -582,15 +732,25 @@ export const ImageOverlay: VFC<{ state: ImageState }> = ({ state }) => {
             setAllowLabelGrowth(currentAllowLabelGrowth);
         };
 
-        state.onStateChanged(handleStateChanged);
+        const handlePinStateChanged = (status: PinStatus, label: string) => {
+            setPinStatus(status);
+            setPinLabel(label);
+        };
 
-        // Handle system suspend
+        state.onStateChanged(handleStateChanged);
+        state.onPinStateChanged(handlePinStateChanged);
+
+        // Handle system suspend（翻訳／ピンの両レーンを落とす）
         const suspend_register = SteamClient.User.RegisterForPrepareForSystemSuspendProgress(function() {
             state.hideImage();
+            state.resetPinState();
         });
 
         return () => {
             state.offStateChanged(handleStateChanged);
+            state.offPinStateChanged(handlePinStateChanged);
+            // ピンエラー用 setTimeout の残留を確実に破棄する
+            state.resetPinState();
             suspend_register.unregister();
         };
     }, [state]);
@@ -607,6 +767,8 @@ export const ImageOverlay: VFC<{ state: ImageState }> = ({ state }) => {
             translationsVisible={translationsVisible}
             fontScale={fontScale}
             allowLabelGrowth={allowLabelGrowth}
+            pinStatus={pinStatus}
+            pinLabel={pinLabel}
         />
     );
 };
