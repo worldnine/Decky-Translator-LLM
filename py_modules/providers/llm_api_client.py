@@ -3,14 +3,121 @@
 
 import json
 import logging
+import random
 import re
-from typing import Optional
+import time
+from typing import Callable, Optional
 
 import requests
 
 from .base import NetworkError, ApiKeyError, RateLimitError, ConfigurationError
 
 logger = logging.getLogger(__name__)
+
+# リトライ設定
+# サーバー過負荷系（混雑）: 長めの間隔で別ノードに振り直されるのを待つ
+_RETRY_DELAYS_SERVER_BUSY = (5.0, 10.0, 20.0)
+# 一時的な通信エラー（瞬断）: 短めで救う
+_RETRY_DELAYS_TRANSIENT = (2.0, 5.0, 10.0)
+_SERVER_BUSY_STATUS = frozenset({500, 502, 503, 504})
+_RATE_LIMIT_STATUS = 429
+_JITTER_RATIO = 0.3
+# リトライ全体の累積予算（秒）。このを超えそうならリトライ打ち切り
+_TOTAL_RETRY_BUDGET_SEC = 90.0
+
+
+def _apply_jitter(delay: float) -> float:
+    """バックオフに±30%のジッターを適用する（雷鳴突進現象を回避）。"""
+    return delay * (1.0 + random.uniform(-_JITTER_RATIO, _JITTER_RATIO))
+
+
+def _parse_retry_after(response: Optional["requests.Response"]) -> Optional[float]:
+    """Retry-After ヘッダーを秒数として返す。未指定・不正なら None。"""
+    if response is None:
+        return None
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _execute_with_retry(
+    request_fn: Callable[[], "requests.Response"],
+    *,
+    api_label: str,
+) -> "requests.Response":
+    """HTTP リクエストを指数バックオフでリトライする。
+
+    - 500/502/503/504 → server_busy 扱い（5s→10s→20s ±30%）
+    - 429 → サーバーから Retry-After があればそれを優先、なければ server_busy と同じ
+    - ConnectionError / Timeout → transient 扱い（2s→5s→10s ±30%）
+    - それ以外のステータスコードはそのまま response を返す（呼び出し側で処理）
+    - 累積 _TOTAL_RETRY_BUDGET_SEC を超えそうならリトライ打ち切り
+    """
+    start = time.monotonic()
+    max_retries = len(_RETRY_DELAYS_SERVER_BUSY)
+    attempt = 0
+    last_exception: Optional[BaseException] = None
+    last_response: Optional["requests.Response"] = None
+
+    while True:
+        category: Optional[str] = None
+        try:
+            response = request_fn()
+            last_exception = None
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            last_exception = e
+            last_response = None
+            category = "transient"
+            response = None
+
+        if response is not None:
+            if response.status_code in _SERVER_BUSY_STATUS:
+                last_response = response
+                category = "busy"
+            elif response.status_code == _RATE_LIMIT_STATUS:
+                last_response = response
+                category = "rate_limit"
+            else:
+                return response  # 成功 or リトライ対象外のエラー
+
+        attempt += 1
+        if attempt > max_retries:
+            break
+
+        if category == "transient":
+            base_delay = _RETRY_DELAYS_TRANSIENT[attempt - 1]
+        else:
+            base_delay = _RETRY_DELAYS_SERVER_BUSY[attempt - 1]
+
+        retry_after = _parse_retry_after(last_response)
+        delay = retry_after if retry_after is not None else _apply_jitter(base_delay)
+
+        elapsed = time.monotonic() - start
+        if elapsed + delay > _TOTAL_RETRY_BUDGET_SEC:
+            logger.warning(
+                f"{api_label} リトライ予算({_TOTAL_RETRY_BUDGET_SEC:.0f}s)超過、"
+                f"諦める (経過{elapsed:.1f}s + 待機{delay:.1f}s)"
+            )
+            break
+
+        status_str = (
+            str(last_response.status_code) if last_response is not None
+            else type(last_exception).__name__
+        )
+        logger.info(
+            f"{api_label} 一時エラー({status_str})、"
+            f"{delay:.1f}秒後に再試行 ({attempt}/{max_retries})"
+        )
+        time.sleep(delay)
+
+    # リトライ使い切り: 最後の例外を投げるか、最終レスポンスを返す
+    if last_exception is not None:
+        raise last_exception
+    return last_response  # 呼び出し側で status_code をチェックしてエラーに変換
 
 
 class LlmApiClient:
@@ -182,8 +289,11 @@ class LlmApiClient:
             payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
 
         try:
-            response = requests.post(
-                url, headers=headers, json=payload, timeout=timeout,
+            response = _execute_with_retry(
+                lambda: requests.post(
+                    url, headers=headers, json=payload, timeout=timeout,
+                ),
+                api_label="Gemini",
             )
 
             if response.status_code == 401 or response.status_code == 403:
@@ -271,8 +381,11 @@ class LlmApiClient:
             payload["chat_template_kwargs"] = {"enable_thinking": False}
 
         try:
-            response = requests.post(
-                url, headers=headers, json=payload, timeout=timeout,
+            response = _execute_with_retry(
+                lambda: requests.post(
+                    url, headers=headers, json=payload, timeout=timeout,
+                ),
+                api_label="LLM",
             )
 
             if response.status_code == 401:

@@ -191,8 +191,12 @@ class ProviderManager:
                 image_b64, source_lang, target_lang,
                 image_width, image_height,
             )
+        except (NetworkError, ApiKeyError, RateLimitError, ConfigurationError) as e:
+            # フロントのエラーハンドリング（vision_translate RPC）に委ねる
+            logger.error(f"Vision direct失敗: {type(e).__name__}: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Vision direct失敗: {e}")
+            logger.error(f"Vision direct 予期せぬエラー: {e}")
             return None
 
         # coordinate_modeの判定: LLMの自己申告を優先、未申告時は既存設定を維持
@@ -245,8 +249,11 @@ class ProviderManager:
             result = await vision_provider.describe_screen(
                 image_b64, image_width, image_height, prompt=prompt,
             )
+        except (NetworkError, ApiKeyError, RateLimitError, ConfigurationError) as e:
+            logger.error(f"describe_screen失敗: {type(e).__name__}: {e}")
+            raise
         except Exception as e:
-            logger.error(f"describe_screen失敗: {e}")
+            logger.error(f"describe_screen 予期せぬエラー: {e}")
             return None
 
         logger.info(f"describe_screen完了: summary={result.get('summary', '')[:50]}")
