@@ -331,7 +331,7 @@ export class GameTranslatorLogic {
             );
 
             if (result?.ok && result?.pin_id) {
-                this.imageState.stopPinLoading();
+                this.imageState.showPinSuccess("Pinned");
                 logger.info('Translator', `Pin saved: ${result.pin_id}`);
             } else {
                 const reason = result?.error || (result?.ok ? "missing pin_id" : "Unknown error");

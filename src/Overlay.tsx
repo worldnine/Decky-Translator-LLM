@@ -34,7 +34,7 @@ const useUIComposition: (composition: UIComposition) => void = findModuleChild(
 );
 
 // ピン操作用インジケータの状態
-export type PinStatus = "idle" | "loading" | "error";
+export type PinStatus = "idle" | "loading" | "success" | "error";
 
 // Enhanced ImageState to handle translated text regions
 export class ImageState {
@@ -52,7 +52,7 @@ export class ImageState {
     // ピン操作用の独立 state レーン（翻訳レーンと干渉させない）
     private pinStatus: PinStatus = "idle";
     private pinLabel = "";
-    private pinErrorTimer: ReturnType<typeof setTimeout> | null = null;
+    private pinAutoHideTimer: ReturnType<typeof setTimeout> | null = null;
     private onPinStateChangedListeners: Array<(status: PinStatus, label: string) => void> = [];
 
     onStateChanged(callback: (visible: boolean, imageData: string, regions: TranslatedRegion[], loading: boolean, processingStep: string, translationsVisible: boolean, fontScale: number, allowLabelGrowth: boolean) => void): void {
@@ -241,18 +241,24 @@ export class ImageState {
 
     // ピン開始: スピナーを回し始める
     startPinLoading(label: string = "Pinning"): void {
-        if (this.pinErrorTimer) {
-            clearTimeout(this.pinErrorTimer);
-            this.pinErrorTimer = null;
+        if (this.pinAutoHideTimer) {
+            clearTimeout(this.pinAutoHideTimer);
+            this.pinAutoHideTimer = null;
         }
         this.pinStatus = "loading";
         this.pinLabel = label;
         this.notifyPinListeners();
     }
 
-    // ピン成功: スピナーを即消す（error 表示中は上書きしない）
+    // ピン成功: 緑のチェックマーク表示に切り替え、duration ミリ秒後に自動で消す
+    // （success/error は短時間だけ通知として残し、UX の完了フィードバックにする）
+    showPinSuccess(label: string = "Pinned", duration: number = 1200): void {
+        this.scheduleAutoHide("success", label, duration);
+    }
+
+    // ピン完了・キャンセル: インジケータを即消す（何も通知しないケース用）
     stopPinLoading(): void {
-        if (this.pinStatus === "error") return;
+        if (this.pinStatus === "error" || this.pinStatus === "success") return;
         this.pinStatus = "idle";
         this.pinLabel = "";
         this.notifyPinListeners();
@@ -260,17 +266,22 @@ export class ImageState {
 
     // ピン失敗: 赤いエラー表示に切り替え、duration ミリ秒後に自動で消す
     showPinError(label: string = "Pin failed", duration: number = 2000): void {
-        if (this.pinErrorTimer) {
-            clearTimeout(this.pinErrorTimer);
-            this.pinErrorTimer = null;
+        this.scheduleAutoHide("error", label, duration);
+    }
+
+    // success / error の共通処理: 一時表示 → 自動で idle に戻す
+    private scheduleAutoHide(status: "success" | "error", label: string, duration: number): void {
+        if (this.pinAutoHideTimer) {
+            clearTimeout(this.pinAutoHideTimer);
+            this.pinAutoHideTimer = null;
         }
-        this.pinStatus = "error";
+        this.pinStatus = status;
         this.pinLabel = label;
         this.notifyPinListeners();
-        this.pinErrorTimer = setTimeout(() => {
+        this.pinAutoHideTimer = setTimeout(() => {
             this.pinStatus = "idle";
             this.pinLabel = "";
-            this.pinErrorTimer = null;
+            this.pinAutoHideTimer = null;
             this.notifyPinListeners();
         }, duration);
     }
@@ -285,9 +296,9 @@ export class ImageState {
 
     // ピンレーンを完全リセット（サスペンド・アンマウント時のクリーンアップ用）
     resetPinState(): void {
-        if (this.pinErrorTimer) {
-            clearTimeout(this.pinErrorTimer);
-            this.pinErrorTimer = null;
+        if (this.pinAutoHideTimer) {
+            clearTimeout(this.pinAutoHideTimer);
+            this.pinAutoHideTimer = null;
         }
         const needNotify = this.pinStatus !== "idle" || this.pinLabel !== "";
         this.pinStatus = "idle";
@@ -433,6 +444,13 @@ export const TranslatedTextOverlay: VFC<{
 
     const pinVisible = pinStatus !== "idle";
     const pinIsError = pinStatus === "error";
+    const pinIsSuccess = pinStatus === "success";
+    const pinIsLoading = pinStatus === "loading";
+    const pinBackground = pinIsError
+        ? "rgba(244, 67, 54, 0.85)"
+        : pinIsSuccess
+            ? "rgba(46, 125, 50, 0.85)"
+            : "rgba(0, 0, 0, 0.7)";
 
     return (
         <>
@@ -644,7 +662,7 @@ export const TranslatedTextOverlay: VFC<{
                  flexDirection: "row",
                  alignItems: "center",
                  color: "#ffffff",
-                 background: pinIsError ? "rgba(244, 67, 54, 0.85)" : "rgba(0, 0, 0, 0.7)",
+                 background: pinBackground,
                  padding: "8px 12px",
                  borderRadius: "20px",
                  maxWidth: "300px",
@@ -659,16 +677,7 @@ export const TranslatedTextOverlay: VFC<{
                     100% { transform: rotate(360deg); }
                 }
             `}</style>
-            {pinIsError ? (
-                <div style={{
-                    width: "16px",
-                    height: "16px",
-                    marginRight: "10px",
-                    fontSize: "14px",
-                    lineHeight: "16px",
-                    textAlign: "center",
-                }}>⚠</div>
-            ) : (
+            {pinIsLoading ? (
                 <div className="loader" style={{
                     border: "3px solid #f3f3f3",
                     borderTop: "3px solid #3498db",
@@ -678,6 +687,15 @@ export const TranslatedTextOverlay: VFC<{
                     animation: "spin 1.5s linear infinite",
                     marginRight: "10px",
                 }}></div>
+            ) : (
+                <div style={{
+                    width: "16px",
+                    height: "16px",
+                    marginRight: "10px",
+                    fontSize: "14px",
+                    lineHeight: "16px",
+                    textAlign: "center",
+                }}>{pinIsError ? "⚠" : "✓"}</div>
             )}
             <div style={{
                 fontSize: "14px",
@@ -686,7 +704,7 @@ export const TranslatedTextOverlay: VFC<{
                 textOverflow: "ellipsis",
                 wordBreak: "break-word",
             }}>
-                {pinIsError ? pinLabel : `${pinLabel}...`}
+                {pinIsLoading ? `${pinLabel}...` : pinLabel}
             </div>
         </div>
         </>
