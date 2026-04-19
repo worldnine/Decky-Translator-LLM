@@ -53,6 +53,9 @@ export class ImageState {
     private pinStatus: PinStatus = "idle";
     private pinLabel = "";
     private pinAutoHideTimer: ReturnType<typeof setTimeout> | null = null;
+    // サスペンド／アンマウントで世代を上げ、進行中の非同期が
+    // 遅延完了で UI を再点灯させないようにする
+    private pinGeneration = 0;
     private onPinStateChangedListeners: Array<(status: PinStatus, label: string) => void> = [];
 
     onStateChanged(callback: (visible: boolean, imageData: string, regions: TranslatedRegion[], loading: boolean, processingStep: string, translationsVisible: boolean, fontScale: number, allowLabelGrowth: boolean) => void): void {
@@ -256,14 +259,6 @@ export class ImageState {
         this.scheduleAutoHide("success", label, duration);
     }
 
-    // ピン完了・キャンセル: インジケータを即消す（何も通知しないケース用）
-    stopPinLoading(): void {
-        if (this.pinStatus === "error" || this.pinStatus === "success") return;
-        this.pinStatus = "idle";
-        this.pinLabel = "";
-        this.notifyPinListeners();
-    }
-
     // ピン失敗: 赤いエラー表示に切り替え、duration ミリ秒後に自動で消す
     showPinError(label: string = "Pin failed", duration: number = 2000): void {
         this.scheduleAutoHide("error", label, duration);
@@ -294,12 +289,19 @@ export class ImageState {
         return this.pinLabel;
     }
 
+    // 進行中の非同期オペレーションが自分の世代かを確認するためのトークン
+    getPinGeneration(): number {
+        return this.pinGeneration;
+    }
+
     // ピンレーンを完全リセット（サスペンド・アンマウント時のクリーンアップ用）
+    // 世代を上げることで進行中の非同期完了を無効化する
     resetPinState(): void {
         if (this.pinAutoHideTimer) {
             clearTimeout(this.pinAutoHideTimer);
             this.pinAutoHideTimer = null;
         }
+        this.pinGeneration++;
         const needNotify = this.pinStatus !== "idle" || this.pinLabel !== "";
         this.pinStatus = "idle";
         this.pinLabel = "";
