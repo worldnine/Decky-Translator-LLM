@@ -211,11 +211,11 @@ class TestParseRetryAfter:
 class TestApplyJitter:
     """_apply_jitter() のテスト。"""
 
-    def test_ジッターは30パーセント以内(self):
+    def test_ジッターは50パーセント以内(self):
         base = 10.0
         for _ in range(100):
             jittered = _apply_jitter(base)
-            assert 7.0 <= jittered <= 13.0
+            assert 5.0 <= jittered <= 15.0
 
 
 @pytest.fixture
@@ -240,31 +240,41 @@ class TestExecuteWithRetry:
         assert request_fn.call_count == 1
         sleep_mock.assert_not_called()
 
-    def test_503が3回続いたら最後の503を返す(self, mock_sleep_and_jitter):
+    def test_503が1回リトライ後も失敗したら503を返す(self, mock_sleep_and_jitter):
         sleep_mock, _ = mock_sleep_and_jitter
-        failures = [_make_response(503) for _ in range(4)]
+        failures = [_make_response(503), _make_response(503)]
         request_fn = MagicMock(side_effect=failures)
 
         result = _execute_with_retry(request_fn, api_label="Test")
 
         assert result.status_code == 503
-        assert request_fn.call_count == 4
-        # 5s→10s→20s の3回スリープ
-        assert sleep_mock.call_count == 3
-        assert sleep_mock.call_args_list[0].args[0] == 5.0
-        assert sleep_mock.call_args_list[1].args[0] == 10.0
-        assert sleep_mock.call_args_list[2].args[0] == 20.0
+        assert request_fn.call_count == 2  # 初回+1回リトライ
+        assert sleep_mock.call_count == 1
+        assert sleep_mock.call_args_list[0].args[0] == 1.5
 
-    def test_503が2回後に200で成功(self, mock_sleep_and_jitter):
+    def test_503が1回後に200で成功(self, mock_sleep_and_jitter):
         sleep_mock, _ = mock_sleep_and_jitter
-        responses = [_make_response(503), _make_response(503), _make_response(200)]
+        responses = [_make_response(503), _make_response(200)]
         request_fn = MagicMock(side_effect=responses)
 
         result = _execute_with_retry(request_fn, api_label="Test")
 
         assert result.status_code == 200
-        assert request_fn.call_count == 3
-        assert sleep_mock.call_count == 2
+        assert request_fn.call_count == 2
+        assert sleep_mock.call_count == 1
+
+    def test_disable_retryならリトライしない(self, mock_sleep_and_jitter):
+        sleep_mock, _ = mock_sleep_and_jitter
+        resp_503 = _make_response(503)
+        request_fn = MagicMock(return_value=resp_503)
+
+        result = _execute_with_retry(
+            request_fn, api_label="Test", disable_retry=True
+        )
+
+        assert result.status_code == 503
+        assert request_fn.call_count == 1
+        sleep_mock.assert_not_called()
 
     def test_401はリトライしない(self, mock_sleep_and_jitter):
         sleep_mock, _ = mock_sleep_and_jitter
@@ -287,20 +297,17 @@ class TestExecuteWithRetry:
         assert result.status_code == 400
         sleep_mock.assert_not_called()
 
-    def test_ConnectionErrorは2s5s10sでリトライ(self, mock_sleep_and_jitter):
+    def test_ConnectionErrorは1_5sで1回リトライ(self, mock_sleep_and_jitter):
         sleep_mock, _ = mock_sleep_and_jitter
         exc = requests.exceptions.ConnectionError("connection refused")
-        request_fn = MagicMock(side_effect=[exc, exc, exc, exc])
+        request_fn = MagicMock(side_effect=[exc, exc])
 
         with pytest.raises(requests.exceptions.ConnectionError):
             _execute_with_retry(request_fn, api_label="Test")
 
-        assert request_fn.call_count == 4
-        assert sleep_mock.call_count == 3
-        # transient 系: 2→5→10
-        assert sleep_mock.call_args_list[0].args[0] == 2.0
-        assert sleep_mock.call_args_list[1].args[0] == 5.0
-        assert sleep_mock.call_args_list[2].args[0] == 10.0
+        assert request_fn.call_count == 2
+        assert sleep_mock.call_count == 1
+        assert sleep_mock.call_args_list[0].args[0] == 1.5
 
     def test_Timeoutも同様にリトライ(self, mock_sleep_and_jitter):
         sleep_mock, _ = mock_sleep_and_jitter
@@ -312,7 +319,7 @@ class TestExecuteWithRetry:
 
         assert result.status_code == 200
         assert sleep_mock.call_count == 1
-        assert sleep_mock.call_args_list[0].args[0] == 2.0
+        assert sleep_mock.call_args_list[0].args[0] == 1.5
 
     def test_429はRetry_Afterを尊重する(self, mock_sleep_and_jitter):
         sleep_mock, _ = mock_sleep_and_jitter
@@ -377,7 +384,7 @@ class TestGeminiNativeWithRetry:
         assert post_mock.call_count == 2
         assert sleep_mock.call_count == 1
 
-    def test_4回連続503でNetworkError(self, mock_sleep_and_jitter):
+    def test_2回連続503でNetworkError(self, mock_sleep_and_jitter):
         client = LlmApiClient(
             base_url="https://generativelanguage.googleapis.com/v1beta",
             model="gemini-2.5-flash",
@@ -385,10 +392,29 @@ class TestGeminiNativeWithRetry:
         )
         with patch(
             "py_modules.providers.llm_api_client.requests.post",
-            side_effect=[_make_response(503) for _ in range(4)],
+            side_effect=[_make_response(503) for _ in range(2)],
         ):
             with pytest.raises(NetworkError):
                 client.call([{"role": "user", "content": "test"}])
+
+    def test_disable_retryで503即NetworkError(self, mock_sleep_and_jitter):
+        sleep_mock, _ = mock_sleep_and_jitter
+        client = LlmApiClient(
+            base_url="https://generativelanguage.googleapis.com/v1beta",
+            model="gemini-2.5-flash",
+            api_key="dummy",
+        )
+        with patch(
+            "py_modules.providers.llm_api_client.requests.post",
+            return_value=_make_response(503),
+        ) as post_mock:
+            with pytest.raises(NetworkError):
+                client.call(
+                    [{"role": "user", "content": "test"}],
+                    disable_retry=True,
+                )
+        assert post_mock.call_count == 1
+        sleep_mock.assert_not_called()
 
     def test_401は即時ApiKeyError(self, mock_sleep_and_jitter):
         sleep_mock, _ = mock_sleep_and_jitter
