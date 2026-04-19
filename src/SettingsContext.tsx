@@ -18,6 +18,7 @@ export interface Settings {
     geminiBaseUrl: string;
     geminiApiKey: string;
     geminiModel: string;
+    geminiFallbackModel: string;
     debugMode: boolean;
     agentEnabled: boolean;
     fontScale: number;
@@ -45,6 +46,7 @@ interface BackendSettings {
     gemini_base_url?: string;
     gemini_api_key?: string;
     gemini_model?: string;
+    gemini_fallback_model?: string;
     debug_mode?: boolean;
     agent_enabled?: boolean;
     font_scale?: number;
@@ -78,6 +80,7 @@ const initialSettings: Settings = {
     geminiBaseUrl: "",
     geminiApiKey: "",
     geminiModel: "",
+    geminiFallbackModel: "",
     debugMode: false,
     agentEnabled: false,
     fontScale: 1.0,
@@ -146,6 +149,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                 geminiBaseUrl: serverSettings.gemini_base_url || "",
                 geminiApiKey: serverSettings.gemini_api_key || "",
                 geminiModel: serverSettings.gemini_model || "",
+                geminiFallbackModel: serverSettings.gemini_fallback_model || "",
                 debugMode: serverSettings.debug_mode || false,
                 agentEnabled: serverSettings.agent_enabled ?? false,
                 fontScale: serverSettings.font_scale ?? 1.0,
@@ -210,6 +214,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({
                 geminiBaseUrl: 'gemini_base_url',
                 geminiApiKey: 'gemini_api_key',
                 geminiModel: 'gemini_model',
+                geminiFallbackModel: 'gemini_fallback_model',
                 debugMode: 'debug_mode',
                 agentEnabled: 'agent_enabled',
                 fontScale: 'font_scale',

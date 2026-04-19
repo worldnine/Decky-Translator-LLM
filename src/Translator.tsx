@@ -3,7 +3,7 @@
 import { call, toaster } from "@decky/api";
 import { Router } from "@decky/ui";
 import { NetworkError, ApiKeyError, RateLimitError } from "./TextRecognizer";
-import { TextTranslator } from "./TextTranslator";
+import { TextTranslator, TranslatedRegion } from "./TextTranslator";
 import { Input, InputMode, ActionType, ProgressInfo } from "./Input";
 import { ImageState } from "./Overlay";
 import { logger } from "./Logger";
@@ -439,8 +439,46 @@ export class GameTranslatorLogic {
                     // Immediately show the new screenshot on the overlay
                     this.imageState.showImage(result.base64);
 
-                    this.imageState.updateProcessingStep("Translating with Gemini");
-                    const visionResult = await this.textTranslator.visionTranslate(result.base64);
+                    const primaryModel = this.geminiModel || "Gemini";
+                    this.imageState.updateProcessingStep(`Translating with ${primaryModel}`);
+
+                    // リトライ/フォールバック状態を 500ms ごとに polling し処理ステップを更新する
+                    type TranslationStatus = {
+                        event: "translating" | "retry" | "fallback";
+                        model: string;
+                        attempt?: number;
+                        max?: number;
+                        delay?: number;
+                        status?: string;
+                    };
+                    const retryPollInterval = setInterval(async () => {
+                        try {
+                            const status = await call<[], TranslationStatus | null>('get_translation_status');
+                            if (!status) return;
+                            if (status.event === "retry") {
+                                this.imageState.updateProcessingStep(
+                                    `Retrying ${status.model} (${status.attempt}/${status.max})`
+                                );
+                            } else if (status.event === "fallback") {
+                                this.imageState.updateProcessingStep(
+                                    `Switching to ${status.model}...`
+                                );
+                            } else {
+                                this.imageState.updateProcessingStep(
+                                    `Translating with ${status.model}`
+                                );
+                            }
+                        } catch (err) {
+                            logger.debug('Translator', 'get_translation_status failed', err);
+                        }
+                    }, 500);
+
+                    let visionResult: TranslatedRegion[] | null;
+                    try {
+                        visionResult = await this.textTranslator.visionTranslate(result.base64);
+                    } finally {
+                        clearInterval(retryPollInterval);
+                    }
 
                     if (result.path) {
                         call('delete_screenshot', result.path).catch(() => {});

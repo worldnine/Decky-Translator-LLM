@@ -3,14 +3,146 @@
 
 import json
 import logging
+import random
 import re
-from typing import Optional
+import time
+from typing import Callable, Optional
 
 import requests
 
 from .base import NetworkError, ApiKeyError, RateLimitError, ConfigurationError
 
 logger = logging.getLogger(__name__)
+
+# リトライ設定
+# Primary モデル（preview系）の混雑時は長く待っても救えないため、
+# 短リトライ1回だけで諦めてフォールバックに切り替える設計。
+# 単発の瞬断（TCPレベル）は 1.5秒で拾えるケースが多い。
+_RETRY_DELAYS_SERVER_BUSY = (1.5,)
+_RETRY_DELAYS_TRANSIENT = (1.5,)
+_SERVER_BUSY_STATUS = frozenset({500, 502, 503, 504})
+_RATE_LIMIT_STATUS = 429
+# ジッターは ±50%（thundering herd を確実に避けるため広めに取る）
+_JITTER_RATIO = 0.5
+# リトライ全体の累積予算（秒）。フォールバック呼び出しを含めた最大遅延を見込む
+_TOTAL_RETRY_BUDGET_SEC = 30.0
+
+
+def _apply_jitter(delay: float) -> float:
+    """バックオフに±30%のジッターを適用する（雷鳴突進現象を回避）。"""
+    return delay * (1.0 + random.uniform(-_JITTER_RATIO, _JITTER_RATIO))
+
+
+def _parse_retry_after(response: Optional["requests.Response"]) -> Optional[float]:
+    """Retry-After ヘッダーを秒数として返す。未指定・不正なら None。"""
+    if response is None:
+        return None
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _execute_with_retry(
+    request_fn: Callable[[], "requests.Response"],
+    *,
+    api_label: str,
+    on_retry: Optional[Callable[[dict], None]] = None,
+    disable_retry: bool = False,
+) -> "requests.Response":
+    """HTTP リクエストを指数バックオフでリトライする。
+
+    - 500/502/503/504 → server_busy 扱い（1.5s ±50%）
+    - 429 → サーバーから Retry-After があればそれを優先
+    - ConnectionError / Timeout → transient 扱い（1.5s ±50%）
+    - それ以外のステータスコードはそのまま response を返す（呼び出し側で処理）
+    - 累積 _TOTAL_RETRY_BUDGET_SEC を超えそうならリトライ打ち切り
+
+    on_retry: リトライ決定時（sleep 直前）に呼ばれるコールバック。
+        引数 dict: {attempt, max, delay, status}
+        UI の「再試行中 (n/n)」表示に利用する。
+    disable_retry: True のときリトライせず初回の結果をそのまま返す。
+        Fallback モデル呼び出しなど、上位がフォールバックチェーンを
+        管理する場合に使う。
+    """
+    start = time.monotonic()
+    max_retries = len(_RETRY_DELAYS_SERVER_BUSY)
+    attempt = 0
+    last_exception: Optional[BaseException] = None
+    last_response: Optional["requests.Response"] = None
+
+    while True:
+        category: Optional[str] = None
+        try:
+            response = request_fn()
+            last_exception = None
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            last_exception = e
+            last_response = None
+            category = "transient"
+            response = None
+
+        if response is not None:
+            if response.status_code in _SERVER_BUSY_STATUS:
+                last_response = response
+                category = "busy"
+            elif response.status_code == _RATE_LIMIT_STATUS:
+                last_response = response
+                category = "rate_limit"
+            else:
+                return response  # 成功 or リトライ対象外のエラー
+
+        if disable_retry:
+            # リトライせず初回結果を返す（Fallback 呼び出し時など）
+            break
+
+        attempt += 1
+        if attempt > max_retries:
+            break
+
+        if category == "transient":
+            base_delay = _RETRY_DELAYS_TRANSIENT[attempt - 1]
+        else:
+            base_delay = _RETRY_DELAYS_SERVER_BUSY[attempt - 1]
+
+        retry_after = _parse_retry_after(last_response)
+        delay = retry_after if retry_after is not None else _apply_jitter(base_delay)
+
+        elapsed = time.monotonic() - start
+        if elapsed + delay > _TOTAL_RETRY_BUDGET_SEC:
+            logger.warning(
+                f"{api_label} リトライ予算({_TOTAL_RETRY_BUDGET_SEC:.0f}s)超過、"
+                f"諦める (経過{elapsed:.1f}s + 待機{delay:.1f}s)"
+            )
+            break
+
+        status_str = (
+            str(last_response.status_code) if last_response is not None
+            else type(last_exception).__name__
+        )
+        logger.info(
+            f"{api_label} 一時エラー({status_str})、"
+            f"{delay:.1f}秒後に再試行 ({attempt}/{max_retries})"
+        )
+        if on_retry is not None:
+            try:
+                on_retry({
+                    "attempt": attempt,
+                    "max": max_retries,
+                    "delay": delay,
+                    "status": status_str,
+                })
+            except Exception as cb_err:
+                logger.debug(f"on_retry callback failed: {cb_err}")
+        time.sleep(delay)
+
+    # リトライ使い切り: 最後の例外を投げるか、最終レスポンスを返す
+    if last_exception is not None:
+        raise last_exception
+    return last_response  # 呼び出し側で status_code をチェックしてエラーに変換
 
 
 class LlmApiClient:
@@ -82,6 +214,8 @@ class LlmApiClient:
         response_format: dict = None,
         max_tokens: int = None,
         timeout: float = 30.0,
+        on_retry: Optional[Callable[[dict], None]] = None,
+        disable_retry: bool = False,
     ) -> str:
         """LLM APIを呼び出す。Geminiの場合はネイティブAPIを使用。
 
@@ -90,6 +224,9 @@ class LlmApiClient:
             ApiKeyError: APIキー不正
             NetworkError: ネットワークエラー
             RateLimitError: レート制限
+
+        on_retry: リトライ発生時のコールバック（UI表示用）。
+        disable_retry: True なら short リトライもスキップ。Fallback 呼び出し等。
         """
         if not self._base_url or not self._model:
             raise ConfigurationError("LLMのbase_urlとmodelを設定してください")
@@ -97,15 +234,19 @@ class LlmApiClient:
         if self.is_gemini():
             return self._call_gemini_native(
                 messages, temperature, response_format, max_tokens, timeout,
+                on_retry=on_retry, disable_retry=disable_retry,
             )
 
         return self._call_openai_compatible(
             messages, temperature, response_format, max_tokens, timeout,
+            on_retry=on_retry, disable_retry=disable_retry,
         )
 
     def _call_gemini_native(
         self, messages: list, temperature: float,
         response_format: dict, max_tokens: int, timeout: float,
+        on_retry: Optional[Callable[[dict], None]] = None,
+        disable_retry: bool = False,
     ) -> str:
         """Gemini ネイティブAPIを呼び出す。thinkingConfig対応。"""
         base = self._base_url
@@ -182,8 +323,13 @@ class LlmApiClient:
             payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
 
         try:
-            response = requests.post(
-                url, headers=headers, json=payload, timeout=timeout,
+            response = _execute_with_retry(
+                lambda: requests.post(
+                    url, headers=headers, json=payload, timeout=timeout,
+                ),
+                api_label=f"Gemini({self._model})",
+                on_retry=on_retry,
+                disable_retry=disable_retry,
             )
 
             if response.status_code == 401 or response.status_code == 403:
@@ -231,6 +377,8 @@ class LlmApiClient:
     def _call_openai_compatible(
         self, messages: list, temperature: float,
         response_format: dict, max_tokens: int, timeout: float,
+        on_retry: Optional[Callable[[dict], None]] = None,
+        disable_retry: bool = False,
     ) -> str:
         """OpenAI API互換エンドポイントを呼び出す。"""
         url = f"{self._base_url}/chat/completions"
@@ -271,8 +419,13 @@ class LlmApiClient:
             payload["chat_template_kwargs"] = {"enable_thinking": False}
 
         try:
-            response = requests.post(
-                url, headers=headers, json=payload, timeout=timeout,
+            response = _execute_with_retry(
+                lambda: requests.post(
+                    url, headers=headers, json=payload, timeout=timeout,
+                ),
+                api_label=f"LLM({self._model})",
+                on_retry=on_retry,
+                disable_retry=disable_retry,
             )
 
             if response.status_code == 401:

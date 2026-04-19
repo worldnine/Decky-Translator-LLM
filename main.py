@@ -965,6 +965,8 @@ class Plugin:
     _gemini_base_url: str = ""
     _gemini_api_key: str = ""
     _gemini_model: str = ""
+    # Primary が 503 等で失敗した場合に切り替える安定モデル（空文字ならフォールバック無し）
+    _gemini_fallback_model: str = ""
     _gemini_disable_thinking: bool = True
     _gemini_parallel: bool = True
 
@@ -1054,6 +1056,11 @@ class Plugin:
                 setting_key = "gemini_model"
                 if self._provider_manager:
                     self._provider_manager.configure_vision(model=value)
+            elif key == "gemini_fallback_model":
+                self._gemini_fallback_model = value
+                setting_key = "gemini_fallback_model"
+                if self._provider_manager:
+                    self._provider_manager.configure_vision(fallback_model=value)
             elif key in ("gemini_disable_thinking", "vision_llm_disable_thinking", "text_llm_disable_thinking", "llm_disable_thinking"):
                 self._gemini_disable_thinking = bool(value)
                 setting_key = "gemini_disable_thinking"
@@ -1303,6 +1310,7 @@ class Plugin:
                 "gemini_base_url": self._gemini_base_url,
                 "gemini_api_key": self._gemini_api_key,
                 "gemini_model": self._gemini_model,
+                "gemini_fallback_model": self._gemini_fallback_model,
                 "agent_enabled": self._settings.get_setting("agent_enabled", False),
                 "advanced_features_enabled": self._settings.get_setting("advanced_features_enabled", False),
                 "pin_feature_enabled": self._settings.get_setting("pin_feature_enabled", False),
@@ -1738,6 +1746,13 @@ class Plugin:
             logger.error(f"Vision translation error: {e}")
             logger.error(traceback.format_exc())
             return {"error": "vision_failed", "message": str(e)}
+
+    async def get_translation_status(self):
+        """翻訳中のリトライ状態を返す（フロントのポーリング用）。
+        翻訳中でなければ None を返す。"""
+        if not self._provider_manager:
+            return None
+        return self._provider_manager.get_retry_status()
 
     # --- ピン機能 RPC ---
 
@@ -2351,6 +2366,7 @@ class Plugin:
             self._gemini_base_url = normalize_gemini_setting(getter, "base_url", default="")
             self._gemini_api_key = normalize_gemini_setting(getter, "api_key", default="")
             self._gemini_model = normalize_gemini_setting(getter, "model", default="")
+            self._gemini_fallback_model = self._settings.get_setting("gemini_fallback_model", "") or ""
             self._gemini_disable_thinking = normalize_gemini_setting(getter, "disable_thinking", default=True)
             self._gemini_parallel = normalize_gemini_setting(getter, "parallel", default=True)
             self._vision_coordinate_mode = self._settings.get_setting(
@@ -2360,6 +2376,7 @@ class Plugin:
             self._settings.set_setting("gemini_base_url", self._gemini_base_url)
             self._settings.set_setting("gemini_api_key", self._gemini_api_key)
             self._settings.set_setting("gemini_model", self._gemini_model)
+            self._settings.set_setting("gemini_fallback_model", self._gemini_fallback_model)
 
             # Initialize provider manager（Gemini Vision直結）
             self._provider_manager = ProviderManager()
@@ -2368,6 +2385,7 @@ class Plugin:
                 base_url=self._effective_gemini_base_url(),
                 api_key=self._gemini_api_key,
                 model=self._gemini_model,
+                fallback_model=self._gemini_fallback_model,
                 disable_thinking=self._gemini_disable_thinking,
                 parallel=self._gemini_parallel,
                 coordinate_mode=self._vision_coordinate_mode,
