@@ -24,12 +24,13 @@ _SERVER_BUSY_STATUS = frozenset({500, 502, 503, 504})
 _RATE_LIMIT_STATUS = 429
 # ジッターは ±50%（thundering herd を確実に避けるため広めに取る）
 _JITTER_RATIO = 0.5
-# リトライ全体の累積予算（秒）。フォールバック呼び出しを含めた最大遅延を見込む
+# リトライ全体の累積予算（秒）。フォールバック呼び出しを含めた最大遅延を見込む。
+# 現在は max_retries=1・遅延1.5秒のため実質到達しない安全弁。
 _TOTAL_RETRY_BUDGET_SEC = 30.0
 
 
 def _apply_jitter(delay: float) -> float:
-    """バックオフに±30%のジッターを適用する（雷鳴突進現象を回避）。"""
+    """バックオフに±50%のジッターを適用する（雷鳴突進現象を回避）。"""
     return delay * (1.0 + random.uniform(-_JITTER_RATIO, _JITTER_RATIO))
 
 
@@ -53,7 +54,10 @@ def _execute_with_retry(
     on_retry: Optional[Callable[[dict], None]] = None,
     disable_retry: bool = False,
 ) -> "requests.Response":
-    """HTTP リクエストを指数バックオフでリトライする。
+    """HTTP リクエストを短リトライ1回だけで再送する。
+
+    指数バックオフではなく固定遅延（_RETRY_DELAYS_* = (1.5,)）で
+    1回だけリトライし、失敗したら諦めて上位のフォールバックに任せる設計。
 
     - 500/502/503/504 → server_busy 扱い（1.5s ±50%）
     - 429 → サーバーから Retry-After があればそれを優先
