@@ -196,25 +196,20 @@ class ProviderManager:
     def _to_original_pixel_coordinates(
         self, rect: dict,
         original_w: int, original_h: int,
-        compressed_w: int, compressed_h: int,
     ) -> dict:
-        """LLM返却座標 → 元画像のピクセル座標に変換する。"""
+        """LLM返却座標 → 元画像のピクセル座標に変換する。
+
+        現行経路では画像を圧縮せず元サイズのまま送るため、
+        normalized (0-1000) → ピクセル変換のみを行う。
+        """
         l, t = float(rect["left"]), float(rect["top"])
         r, b = float(rect["right"]), float(rect["bottom"])
 
-        # Stage 1: normalized → compressed pixel
         if self._vision_coordinate_mode == "normalized":
-            l = l * compressed_w / 1000
-            t = t * compressed_h / 1000
-            r = r * compressed_w / 1000
-            b = b * compressed_h / 1000
-
-        # Stage 2: compressed pixel → original pixel
-        if compressed_w != original_w or compressed_h != original_h:
-            scale_x = original_w / compressed_w
-            scale_y = original_h / compressed_h
-            l, r = l * scale_x, r * scale_x
-            t, b = t * scale_y, b * scale_y
+            l = l * original_w / 1000
+            t = t * original_h / 1000
+            r = r * original_w / 1000
+            b = b * original_h / 1000
 
         return {
             "left":   max(0, min(int(l), original_w)),
@@ -408,7 +403,6 @@ class ProviderManager:
             for r in raw_regions:
                 pixel_rect = self._to_original_pixel_coordinates(
                     r["rect"],
-                    image_width, image_height,
                     image_width, image_height,
                 )
                 result.append({
