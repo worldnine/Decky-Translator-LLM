@@ -929,10 +929,9 @@ def get_base64_image(image_path):
             content = image_file.read()
             return base64.b64encode(content).decode('utf-8')
     except MemoryError:
-        logger.error("Memory error encoding image, trying 1MB chunk")
-        with open(image_path, "rb") as image_file:
-            content = image_file.read(1024 * 1024)
-            return base64.b64encode(content).decode('utf-8')
+        # 部分的な読み出しは壊れた画像データを後段に流す原因になるため、エラーとして空文字を返す
+        logger.error(f"Memory error while encoding image: {image_path}")
+        return ""
     except Exception as e:
         logger.error(f"Failed to convert image to base64: {e}")
         return ""
@@ -1382,23 +1381,6 @@ class Plugin:
                 "HOME": DECKY_HOME
             })
 
-            # GStreamer pipeline: grab a few frames then EOS
-            # Using num-buffers=5 to skip potentially invalid first frames from PipeWire
-            cmd = (
-                # keep only the path to your plugins, without GST_VAAPI_ALL_DRIVERS
-                f"GST_PLUGIN_PATH={GSTPLUGINSPATH} "
-                f"LD_LIBRARY_PATH={DEPSPATH} "
-                f"gst-launch-1.0 -e "
-                # capture multiple buffers to ensure valid frame (pngenc snapshot=true saves last)
-                f"pipewiresrc do-timestamp=true num-buffers=5 ! "
-                # let videoconvert work by default (CPU), it will create normal raw
-                f"videoconvert ! "
-                # then directly to PNG
-                f"pngenc snapshot=true ! "
-                f"filesink location=\"{screenshot_path}\""
-            )
-            logger.debug(f"GStreamer command: {cmd}")
-
             # Launch subprocess asynchronously
             proc = await asyncio.create_subprocess_exec(
                 'gst-launch-1.0',
@@ -1692,10 +1674,13 @@ class Plugin:
             if not self._provider_manager:
                 return {"error": "vision_failed", "message": "Provider manager not initialized"}
 
-            # Base64デコード
+            # Base64デコード（data URIプレフィックスがあってもカンマが無い場合はペイロードを取り出せない）
             img_str = image_data
             if img_str.startswith('data:image'):
-                img_str = img_str.split(',', 1)[1]
+                _, sep, payload = img_str.partition(',')
+                if not sep:
+                    return {"error": "vision_failed", "message": "Invalid data URI: missing ',' separator"}
+                img_str = payload
             image_bytes = base64.b64decode(img_str)
 
             # 画像サイズ取得（システムPythonサブプロセス）
@@ -1762,11 +1747,14 @@ class Plugin:
             pin_id = pin_history.generate_pin_id()
             capture_source = "reuse" if image_data else "live_capture"
 
-            # 画像データの取得
+            # 画像データの取得（data URIプレフィックスがあってもカンマが無い場合はペイロードを取り出せない）
             if image_data:
                 img_str = image_data
                 if img_str.startswith('data:image'):
-                    img_str = img_str.split(',', 1)[1]
+                    _, sep, payload = img_str.partition(',')
+                    if not sep:
+                        return {"ok": False, "error": "Invalid data URI: missing ',' separator"}
+                    img_str = payload
                 image_bytes = base64.b64decode(img_str)
             else:
                 # バックエンドでスクリーンショット取得
@@ -1777,7 +1765,10 @@ class Plugin:
                 if not img_str:
                     return {"ok": False, "error": "スクリーンショットのbase64が空"}
                 if img_str.startswith('data:image'):
-                    img_str = img_str.split(',', 1)[1]
+                    _, sep, payload = img_str.partition(',')
+                    if not sep:
+                        return {"ok": False, "error": "Invalid data URI: missing ',' separator"}
+                    img_str = payload
                 image_bytes = base64.b64decode(img_str)
                 # 一時スクリーンショットを削除
                 tmp_path = screenshot_result.get("path", "")
