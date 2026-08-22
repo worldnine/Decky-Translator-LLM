@@ -102,6 +102,23 @@ jobs:
           name: decky-translator-plugin
           path: out/*.zip
 
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install test dependencies
+        run: pip install requests pytest
+
+      - name: Run tests
+        run: pytest tests/ -q
+
   release:
     if: needs.build.outputs.is_release == 'true'
     needs: build
