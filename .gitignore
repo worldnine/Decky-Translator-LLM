@@ -85,3 +85,5 @@ cli/
 /nul
 mise.toml
 deploy.sh
+.pi/
+.claude/
