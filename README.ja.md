@@ -19,7 +19,7 @@ Steam Deck 用の [Decky Loader](https://github.com/SteamDeckHomebrew/decky-load
 
 ### 対応バックエンド
 
-* Google Gemini（gemini-2.5-flash, gemini-2.5-flash-lite 等）
+* Google Gemini（gemini-3.1-flash-lite, gemini-3.7-flash 等）
 * OpenAI API 互換サービス（Ollama, vLLM, LiteLLM 等）
 
 ## インストール
@@ -48,7 +48,7 @@ Decky公式ストアには登録していません。手動インストールの
 | 設定項目 | 説明 |
 | --- | --- |
 | Gemini API Key | Gemini / OpenAI互換サービスのAPIキー |
-| Gemini Model | モデル名（例: `gemini-2.5-flash-lite`） |
+| Gemini Model | モデル名（例: `gemini-3.1-flash-lite`） |
 | Base URL（Advanced） | APIエンドポイント。未設定時はGoogle Gemini APIを使用 |
 
 ### プロンプト

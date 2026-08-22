@@ -196,7 +196,7 @@ export const TabControls: VFC<TabControlsProps> = ({ inputDiagnostics }) => {
                             value={settings.geminiModel}
                             onChange={(e) => updateSetting('geminiModel', e.target.value, 'Gemini Model')}
                             bShowClearAction={true}
-                            description="e.g. gemini-2.5-flash or gemini-2.5-pro"
+                            description="e.g. gemini-3.6-flash or gemini-3.7-flash"
                         />
                     </Field>
                 </PanelSectionRow>
@@ -207,7 +207,7 @@ export const TabControls: VFC<TabControlsProps> = ({ inputDiagnostics }) => {
                             value={settings.geminiFallbackModel}
                             onChange={(e) => updateSetting('geminiFallbackModel', e.target.value, 'Gemini Fallback Model')}
                             bShowClearAction={true}
-                            description="Used when primary returns 503. Leave blank to disable. e.g. gemini-2.5-flash-lite"
+                            description="Used when primary returns 503. Leave blank to disable. e.g. gemini-3.1-flash-lite"
                         />
                     </Field>
                 </PanelSectionRow>

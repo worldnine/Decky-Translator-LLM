@@ -213,6 +213,17 @@ class LlmApiClient:
             and "generativelanguage.googleapis.com" in self._base_url
         )
 
+    def _supports_thinking_off(self) -> bool:
+        """thinkingBudget: 0（思考完全オフ）を受け付けるモデルか判定する。
+        Gemini 3.5 以降は thinkingBudget: 0 が廃止され 400 INVALID_ARGUMENT になるため、
+        thinkingLevel: "low" を使う。"""
+        m = self._model.strip().lower()
+        # gemini-3.5 以降（3.6, 3.7, ...）と未来のバージョンを弾く
+        for prefix in ("gemini-3.5", "gemini-3.6", "gemini-3.7", "gemini-3.8", "gemini-3.9"):
+            if m.startswith(prefix):
+                return False
+        return True
+
     def call(
         self, messages: list, temperature: float = 0.1,
         response_format: dict = None,
@@ -324,7 +335,10 @@ class LlmApiClient:
                 payload["generationConfig"]["responseSchema"] = schema
 
         if self._disable_thinking:
-            payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
+            if self._supports_thinking_off():
+                payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
+            else:
+                payload["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "low"}
 
         try:
             response = _execute_with_retry(

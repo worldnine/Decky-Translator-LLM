@@ -3,9 +3,9 @@
 # 使い方: ./scripts/set-model.sh <model-name> [DECK_IP]
 #
 # 例:
-#   ./scripts/set-model.sh gemini-2.5-flash-lite
-#   ./scripts/set-model.sh gemini-2.5-flash
-#   ./scripts/set-model.sh gemini-3.1-flash-lite-preview 192.168.11.38
+#   ./scripts/set-model.sh gemini-3.1-flash-lite
+#   ./scripts/set-model.sh gemini-3.7-flash
+#   ./scripts/set-model.sh gemini-3.6-flash 192.168.11.38
 #
 # 事前準備:
 #   - ssh-copy-id deck@<DECK_IP> 済みであること
@@ -25,9 +25,9 @@ if [ -z "${MODEL}" ]; then
     echo "使い方: $0 <model-name> [DECK_IP]"
     echo ""
     echo "例:"
-    echo "  $0 gemini-2.5-flash-lite"
-    echo "  $0 gemini-2.5-flash"
-    echo "  $0 gemini-3.1-flash-lite-preview"
+    echo "  $0 gemini-3.1-flash-lite"
+    echo "  $0 gemini-3.7-flash"
+    echo "  $0 gemini-3.6-flash"
     exit 1
 fi
 
