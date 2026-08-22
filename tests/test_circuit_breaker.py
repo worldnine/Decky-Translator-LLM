@@ -109,3 +109,55 @@ class TestGetState:
             assert cb.get_state() == "closed"
             # allow() が呼ばれたら half_open に遷移
             assert cb.allow() == "half_open"
+
+
+class TestSettle:
+    """HALF_OPEN 試行の明示的決着（settle）のテスト。
+
+    record_success()/record_failure() を経由しない失敗（ApiKeyError 等の
+    即 raise、非 busy エラー）でも in-flight フラグが残留せず、
+    allow() が永久に open を返す固まりが起きないことを検証する。
+    """
+
+    def test_HALF_OPEN中の非busy失敗でもsettleで決着する(self, cb):
+        with _patch_now(cb, 100.0):
+            for _ in range(3):
+                cb.record_failure()
+        with _patch_now(cb, 165.0):
+            assert cb.allow() == "half_open"
+            # record_* を呼ばない非 busy 失敗を想定し、settle(False) のみで決着
+            cb.settle(False)
+            # in-flight フラグが残留せず OPEN へ復帰している
+            assert cb._half_open_in_flight is False
+            assert cb.allow() == "open"
+
+    def test_settle後はOPEN期間経過で再試行できる(self, cb):
+        with _patch_now(cb, 100.0):
+            for _ in range(3):
+                cb.record_failure()
+        with _patch_now(cb, 165.0):
+            cb.allow()
+            cb.settle(False)  # 非 busy 失敗 → OPEN へ戻る
+        with _patch_now(cb, 230.0):  # open_sec(60s) 経過
+            # 固まらず HALF_OPEN に遷移できる（バグ1の回帰）
+            assert cb.allow() == "half_open"
+
+    def test_record後のsettleは冪等(self, cb):
+        with _patch_now(cb, 100.0):
+            for _ in range(3):
+                cb.record_failure()
+        with _patch_now(cb, 165.0):
+            cb.allow()
+            cb.record_failure()  # HALF_OPEN 失敗 → OPEN へ復帰済み
+            # 二重に決着しても状態を壊さない
+            cb.settle(False)
+            assert cb.allow() == "open"
+
+    def test_settle成功でCLOSED復帰(self, cb):
+        with _patch_now(cb, 100.0):
+            for _ in range(3):
+                cb.record_failure()
+        with _patch_now(cb, 165.0):
+            cb.allow()
+            cb.settle(True)
+            assert cb.allow() == "closed"
