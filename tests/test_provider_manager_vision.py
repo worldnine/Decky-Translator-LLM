@@ -344,3 +344,88 @@ class TestFallbackLoop:
         # 2回目呼び出し: Fallback (60s)
         second_call = fake.direct_translate.await_args_list[1]
         assert second_call.kwargs["timeout"] == 60.0
+
+
+class TestHalfOpenRecovery:
+    """HALF_OPEN 試行の決着に関する結合テスト（バグ1・バグ3の回帰）。
+
+    HALF_OPEN 試行が RateLimitError で失敗した場合でも in-flight フラグが
+    残留せず、OPEN 期間経過後に Primary を再試行できることを検証する。
+    以前は record_success/record_failure を経由しないパスでフラグが残留し、
+    allow() が永久に open を返して Primary が二度と試行されなくなっていた。
+    """
+
+    def test_HALF_OPEN試行がRateLimitErrorで失敗してもFallback成功後に再試行可能(self):
+        import time as _time
+
+        from py_modules.providers.base import RateLimitError
+
+        pm, fake = _build_pm_with_fallback()
+        # OPEN 期間切れの状態を作り、次の allow() で HALF_OPEN に遷移させる
+        pm._circuit._open_until = _time.monotonic() - 1.0
+        fake.direct_translate.side_effect = [
+            RateLimitError("Gemini API returned status 429"),
+            ([{"text": "hi", "translated_text": "やあ", "rect": {"left": 0, "top": 0, "right": 10, "bottom": 10}}], "pixel"),
+        ]
+        result = asyncio.get_event_loop().run_until_complete(
+            pm.recognize_and_translate(b"img", "en", "ja", 100, 100)
+        )
+        assert result is not None
+        # Primary(RateLimitError) → Fallback(成功)
+        assert fake.direct_translate.await_count == 2
+        # in-flight フラグが残留せず決着済み
+        assert pm._circuit._half_open_in_flight is False
+        # 429 は混雑シグナルなので OPEN に戻るが、期間経過すれば Primary を再試行できる
+        assert pm._circuit.get_state() == "open"
+        pm._circuit._open_until = _time.monotonic() - 1.0
+        assert pm._circuit.allow() == "half_open"
+
+    def test_HALF_OPEN試行がApiKeyErrorで失敗しても固まらない(self):
+        """ApiKeyError の即 raise パスでも finally 経由で必ず決着する。"""
+        import time as _time
+
+        from py_modules.providers.base import ApiKeyError
+
+        pm, fake = _build_pm_with_fallback()
+        pm._circuit._open_until = _time.monotonic() - 1.0
+        fake.direct_translate.side_effect = ApiKeyError("invalid")
+        with pytest.raises(ApiKeyError):
+            asyncio.get_event_loop().run_until_complete(
+                pm.recognize_and_translate(b"img", "en", "ja", 100, 100)
+            )
+        # in-flight フラグが残留しない
+        assert pm._circuit._half_open_in_flight is False
+        # OPEN へ戻るので、期間経過後は再び HALF_OPEN 試行ができる
+        pm._circuit._open_until = _time.monotonic() - 1.0
+        assert pm._circuit.allow() == "half_open"
+
+    def test_429もサーキットのrecord_failure対象(self):
+        """バグ3: RateLimitError も混雑シグナルとしてカウントされる。"""
+        from py_modules.providers.base import RateLimitError
+
+        pm, fake = _build_pm_with_fallback()
+        fake.direct_translate.return_value = (
+            [{"text": "hi", "translated_text": "やあ", "rect": {"left": 0, "top": 0, "right": 10, "bottom": 10}}],
+            "pixel",
+        )
+
+        # direct_translate を Primary(429)/Fallback(成功) で振り分ける
+        results = []
+
+        async def fake_translate(image_b64, source_lang, target_lang,
+                                 w, h, **kwargs):
+            if kwargs.get("timeout") == 15.0:
+                raise RateLimitError("Gemini API returned status 429")
+            return ([{"text": "hi", "translated_text": "やあ", "rect": {"left": 0, "top": 0, "right": 10, "bottom": 10}}], "pixel")
+
+        fake.direct_translate = AsyncMock(side_effect=fake_translate)
+        for _ in range(3):
+            result = asyncio.get_event_loop().run_until_complete(
+                pm.recognize_and_translate(b"img", "en", "ja", 100, 100)
+            )
+            results.append(result)
+
+        # 全回 Fallback 成功で結果が返る
+        assert all(r is not None for r in results)
+        # 3回の 429 がカウントされ Circuit が OPEN になる
+        assert pm._circuit.get_state() == "open"

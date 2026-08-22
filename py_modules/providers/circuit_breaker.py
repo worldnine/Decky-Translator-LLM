@@ -118,6 +118,26 @@ class CircuitBreaker:
         if self._failures:
             self._failures.clear()
 
+    def settle(self, success: bool) -> None:
+        """HALF_OPEN 試行の決着を明示的に通知する（冪等）。
+
+        record_success()/record_failure() は HALF_OPEN 試行を自動的に決着
+        させるが、呼ばれないパス（ApiKeyError 等の即 raise、混雑シグナルに
+        ならない非 busy エラー）では in-flight フラグが残留し、以後 allow()
+        が永久に open を返す固まりが起きる。呼び出し側は finally で必ず
+        これを呼ぶこと。既に決着済みの場合は何もしない。
+
+        - success=True:  CLOSED へ復帰（record_success() と同じ挙動）
+        - success=False: OPEN へ戻す（record_failure() の HALF_OPEN 分岐と同じ）
+        """
+        if not self._half_open_in_flight:
+            # record_* 済みなど、既に決着している場合は何もしない
+            return
+        if success:
+            self.record_success()
+        else:
+            self.record_failure()
+
     def get_state(self) -> str:
         """状態問い合わせ専用（副作用なし）。ログやテスト用。"""
         now = self._now()

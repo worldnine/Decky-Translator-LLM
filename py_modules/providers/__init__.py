@@ -1,6 +1,7 @@
 # providers/__init__.py
 # Provider factory and manager — Gemini Vision専用構成
 
+import asyncio
 import base64
 import logging
 from typing import List, Optional
@@ -42,6 +43,12 @@ class ProviderManager:
 
     def __init__(self):
         self._vision_provider: Optional[GeminiVisionProvider] = None
+        # ピン解析とオーバーレイ手動翻訳が同時に走ると、共有 Provider のモデルが
+        # 実行中に configure(model=...) で差し替わり互いの結果を壊すため、
+        # 翻訳リクエスト全体を直列化する
+        self._translate_lock = asyncio.Lock()
+        # _retry_status の世代カウンタ（ロック保持者の判定に使う）
+        self._retry_generation = 0
 
         # Gemini設定
         self._gemini_base_url = ""
@@ -281,40 +288,56 @@ class ProviderManager:
             )
 
         last_exc: Optional[Exception] = None
-        for i, (model, is_primary, timeout) in enumerate(attempts):
-            # VisionProvider のモデルを差し替え
-            vision_provider.configure(model=model)
-            self._record_translating(model)
-            try:
-                result = await vision_provider.direct_translate(
-                    image_b64, source_lang, target_lang,
-                    image_width, image_height,
-                    on_retry=self._record_retry,
-                    disable_retry=True,
-                    timeout=timeout,
-                )
-                if is_primary:
-                    self._circuit.record_success()
-                return result
-            except (NetworkError, RateLimitError) as e:
-                last_exc = e
-                if is_primary and self._is_server_busy_error(e):
-                    self._circuit.record_failure()
-                # まだ次の試行があれば fallback に切り替え
-                is_last = (i == len(attempts) - 1)
-                if not is_last:
-                    next_model = attempts[i + 1][0]
-                    logger.warning(
-                        f"{model} で失敗({type(e).__name__}): {e}。"
-                        f"{next_model} にフォールバック"
+        # HALF_OPEN 試行かどうかを記録しておく。試行が record_success/
+        # record_failure に到達せず終わった場合（ApiKeyError 等の即 raise、
+        # 非 busy エラー）でも、finally で必ずサーキットに決着を通知する。
+        # 決着を放置すると in-flight フラグが残留し allow() が永久に
+        # open を返す固まりが起きるため。
+        half_open_trial = circuit_state == CircuitBreaker.STATE_HALF_OPEN
+        try:
+            for i, (model, is_primary, timeout) in enumerate(attempts):
+                # VisionProvider のモデルを差し替え
+                vision_provider.configure(model=model)
+                self._record_translating(model)
+                try:
+                    result = await vision_provider.direct_translate(
+                        image_b64, source_lang, target_lang,
+                        image_width, image_height,
+                        on_retry=self._record_retry,
+                        disable_retry=True,
+                        timeout=timeout,
                     )
-                    self._record_fallback(next_model)
-                    continue
-                # 最後のモデルも失敗
-                raise
-            except (ApiKeyError, ConfigurationError):
-                # 認証・設定エラーはフォールバックしても解決しない
-                raise
+                    if is_primary:
+                        self._circuit.record_success()
+                    return result
+                except (NetworkError, RateLimitError) as e:
+                    last_exc = e
+                    # 503/Timeout に加え 429 もサーバー混雑のシグナルとして
+                    # サーキットに反映する
+                    if is_primary and (
+                        self._is_server_busy_error(e) or isinstance(e, RateLimitError)
+                    ):
+                        self._circuit.record_failure()
+                    # まだ次の試行があれば fallback に切り替え
+                    is_last = (i == len(attempts) - 1)
+                    if not is_last:
+                        next_model = attempts[i + 1][0]
+                        logger.warning(
+                            f"{model} で失敗({type(e).__name__}): {e}。"
+                            f"{next_model} にフォールバック"
+                        )
+                        self._record_fallback(next_model)
+                        continue
+                    # 最後のモデルも失敗
+                    raise
+                except (ApiKeyError, ConfigurationError):
+                    # 認証・設定エラーはフォールバックしても解決しない
+                    raise
+        finally:
+            if half_open_trial:
+                # record_* で既に決着している場合は settle() は no-op。
+                # 未決着のまま抜けた場合のみここで OPEN へ戻す
+                self._circuit.settle(False)
 
         # ここに到達するのは全試行失敗時のみ（raise で抜けていない稀なパス）
         raise last_exc or NetworkError("翻訳に失敗しました")
@@ -327,65 +350,77 @@ class ProviderManager:
         image_width: int,
         image_height: int,
     ) -> Optional[List[dict]]:
-        """Vision direct: スクリーンショットから直接テキスト検出+翻訳。"""
-        vision_provider = self.get_vision_provider()
-        if not vision_provider or not vision_provider.is_available():
-            logger.warning("Vision direct: Vision Providerが利用不可")
-            return None
+        """Vision direct: スクリーンショットから直接テキスト検出+翻訳。
 
-        image_b64 = base64.b64encode(image_bytes).decode()
+        ピン解析とオーバーレイ手動翻訳の同時実行でも共有 Provider のモデルが
+        実行中に差し替わらないよう、リクエスト全体をロックで直列化する。
+        """
+        async with self._translate_lock:
+            vision_provider = self.get_vision_provider()
+            if not vision_provider or not vision_provider.is_available():
+                logger.warning("Vision direct: Vision Providerが利用不可")
+                return None
 
-        # リトライ状態を初期化（前回の残骸をクリア）
-        self._retry_status = None
-        try:
-            raw_regions, reported_mode = await self._translate_with_fallback(
-                vision_provider, image_b64, source_lang, target_lang,
-                image_width, image_height,
-            )
-        except (NetworkError, ApiKeyError, RateLimitError, ConfigurationError) as e:
-            # フロントのエラーハンドリング（vision_translate RPC）に委ねる
-            logger.error(f"Vision direct失敗: {type(e).__name__}: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Vision direct 予期せぬエラー: {e}")
-            return None
-        finally:
-            # 翻訳終了時にリトライ状態をクリア（ポーリング側が None を受け取れるように）
+            image_b64 = base64.b64encode(image_bytes).decode()
+
+            # リトライ状態を初期化（前回の残骸をクリア）
+            # 自分の世代を記録しておき、finally では自分の世代だけクリアする
+            self._retry_generation += 1
+            generation = self._retry_generation
             self._retry_status = None
-            # Primary モデルに念のため戻しておく（次回呼び出し時のため）
-            if self._gemini_model:
-                vision_provider.configure(model=self._gemini_model)
+            try:
+                raw_regions, reported_mode = await self._translate_with_fallback(
+                    vision_provider, image_b64, source_lang, target_lang,
+                    image_width, image_height,
+                )
+            except (NetworkError, ApiKeyError, RateLimitError, ConfigurationError) as e:
+                # フロントのエラーハンドリング（vision_translate RPC）に委ねる
+                logger.error(f"Vision direct失敗: {type(e).__name__}: {e}")
+                raise
+            except Exception as e:
+                logger.error(f"Vision direct 予期せぬエラー: {e}")
+                return None
+            finally:
+                # 翻訳終了時にリトライ状態をクリア（ポーリング側が None を受け取れるように）
+                # ロックで直列化されているため他リクエストと重なることはないが、
+                # 将来ロック外から呼ばれても他リクエストの状態を壊さないよう
+                # 世代一致時のみクリアする
+                if self._retry_generation == generation:
+                    self._retry_status = None
+                # Primary モデルに念のため戻しておく（次回呼び出し時のため）
+                if self._gemini_model:
+                    vision_provider.configure(model=self._gemini_model)
 
-        # coordinate_modeの判定: LLMの自己申告を優先、未申告時は既存設定を維持
-        if reported_mode and "pixel" in str(reported_mode).lower():
-            effective_mode = "pixel"
-            logger.info(f"coordinate_mode: LLM自己申告 pixel ({reported_mode})")
-        elif reported_mode:
-            effective_mode = "normalized"
-            logger.info(f"coordinate_mode: LLM自己申告 normalized ({reported_mode})")
-        else:
-            effective_mode = self._vision_coordinate_mode
-            logger.info(f"coordinate_mode: 未申告、既存設定を維持 ({effective_mode})")
-        self._vision_coordinate_mode = effective_mode
+            # coordinate_modeの判定: LLMの自己申告を優先、未申告時は既存設定を維持
+            if reported_mode and "pixel" in str(reported_mode).lower():
+                effective_mode = "pixel"
+                logger.info(f"coordinate_mode: LLM自己申告 pixel ({reported_mode})")
+            elif reported_mode:
+                effective_mode = "normalized"
+                logger.info(f"coordinate_mode: LLM自己申告 normalized ({reported_mode})")
+            else:
+                effective_mode = self._vision_coordinate_mode
+                logger.info(f"coordinate_mode: 未申告、既存設定を維持 ({effective_mode})")
+            self._vision_coordinate_mode = effective_mode
 
-        # 座標変換 + TranslatedRegion互換形式
-        result = []
-        for r in raw_regions:
-            pixel_rect = self._to_original_pixel_coordinates(
-                r["rect"],
-                image_width, image_height,
-                image_width, image_height,
-            )
-            result.append({
-                "text": r["text"],
-                "translatedText": r["translated_text"],
-                "rect": pixel_rect,
-                "confidence": 1.0,
-                "isDialog": False,
-            })
+            # 座標変換 + TranslatedRegion互換形式
+            result = []
+            for r in raw_regions:
+                pixel_rect = self._to_original_pixel_coordinates(
+                    r["rect"],
+                    image_width, image_height,
+                    image_width, image_height,
+                )
+                result.append({
+                    "text": r["text"],
+                    "translatedText": r["translated_text"],
+                    "rect": pixel_rect,
+                    "confidence": 1.0,
+                    "isDialog": False,
+                })
 
-        logger.info(f"Vision direct完了: {len(result)} regions")
-        return result
+            logger.info(f"Vision direct完了: {len(result)} regions")
+            return result
 
     async def describe_screen(
         self,
